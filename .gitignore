@@ -1,0 +1,7 @@
+/target
+Cargo.lock
+*.aex
+*.plugin
+*.zip
+.DS_Store
+*.rsrc
