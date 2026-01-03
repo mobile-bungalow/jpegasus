@@ -31,8 +31,7 @@ fn main() {
             OutFlags::IDoDialog
                 | OutFlags::PixIndependent
                 | OutFlags::DeepColorAware
-                | OutFlags::SendUpdateParamsUI
-                | OutFlags::NonParamVary,
+                | OutFlags::SendUpdateParamsUI,
         ),
         Property::AE_Effect_Global_OutFlags_2(
             OutFlags2::FloatColorAware

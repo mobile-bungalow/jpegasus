@@ -10,12 +10,19 @@ crate-type = ["cdylib"]
 after-effects = { git = "https://github.com/virtualritz/after-effects", commit = "9cf784e" }
 after-effects-sys = "0.2.1"
 env_logger = "0.11.3"
-tweak_shader = "0.4.0"
+wgpu = "23"
+bytemuck = { version = "1.14", features = ["derive"] }
+encase = "0.10"
+half = "2.4"
 log = "0.4"
 strum = { version = "0.26", features = ["derive"] }
 win_dbg_logger = "0.1"
 log-panics = "2.1"
 pollster = "0.3.0"
+
+[dev-dependencies]
+image = "0.25"
+image-compare = "0.4"
 
 [build-dependencies]
 pipl = { git = "https://github.com/virtualritz/after-effects.git" }

@@ -1,7 +1,10 @@
+// the ae macro does som unsanitary stuff
+#![allow(clippy::drop_non_drop, clippy::question_mark)]
+
 mod param_util;
+pub mod pipeline;
 mod render;
 mod types;
-mod u16_conversion;
 
 use std::sync::Mutex;
 
@@ -16,15 +19,8 @@ static PLUGIN_ID: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
 
 ae::define_effect!(JpegasusGlobal, LocalMutex, ParamIdx);
 
-macro_rules! lock {
-    ( $mutex_arc:expr ) => {
-        $mutex_arc.lock().unwrap()
-    };
-}
-
 impl AdobePluginInstance for LocalMutex {
     fn flatten(&self) -> Result<(u16, Vec<u8>), Error> {
-        // No state to persist
         Ok((1, Vec::new()))
     }
 
@@ -48,14 +44,6 @@ impl AdobePluginInstance for LocalMutex {
             Command::SmartPreRender { mut extra } => {
                 let mut req = extra.output_request();
                 let cb = extra.callbacks();
-
-                if let Some(global) = plugin.global.as_init() {
-                    lock!(self).init_or_update(
-                        &global.device,
-                        &global.queue,
-                        extra.bit_depth().into(),
-                    );
-                }
 
                 req.field = ae_sys::PF_Field_FRAME as i32;
                 req.preserve_rgb_of_zero_alpha = 1;
@@ -110,11 +98,18 @@ impl AdobePluginInstance for LocalMutex {
                 }
             }
             Command::SmartRender { extra } => {
-                render::render(plugin, &mut lock!(self), &extra)?;
-            }
-            Command::SequenceSetup | Command::SequenceResetup => {
-                if let Some(global) = plugin.global.as_init() {
-                    lock!(self).init_or_update(&global.device, &global.queue, BitDepth::U8);
+                if let Some(gpu_error) = take_gpu_error() {
+                    plugin
+                        .out_data
+                        .set_return_msg(&format!("Jpegasus: {gpu_error}"));
+                    return Err(ae::Error::Generic);
+                }
+                render::render(plugin, &mut self.lock().unwrap(), &extra)?;
+                if let Some(gpu_error) = take_gpu_error() {
+                    plugin
+                        .out_data
+                        .set_return_msg(&format!("Jpegasus: {gpu_error}"));
+                    return Err(ae::Error::Generic);
                 }
             }
             _ => {}
@@ -153,10 +148,14 @@ impl AdobePluginGlobal for JpegasusGlobal {
                     .set(suite.register_with_aegp("jpegasus")?)
                     .expect("already set");
 
-                if let JpegasusGlobal::Uninit = self {
-                    out_data.set_return_msg("Jpegasus failed to initialize GPU");
-                    return Err(ae::Error::Generic);
-                };
+                if self.get().is_none() {
+                    if let Some(inner) = init_global() {
+                        let _ = self.set(inner);
+                    } else {
+                        out_data.set_return_msg("Jpegasus failed to initialize GPU");
+                        return Err(ae::Error::Generic);
+                    }
+                }
             }
             _ => {}
         }

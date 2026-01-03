@@ -1,156 +1,85 @@
-use tweak_shader::input_type::ShaderBool;
-use tweak_shader::TextureDesc;
-
-use super::*;
 use crate::param_util::INPUT_LAYER_CHECKOUT_ID;
+use crate::pipeline::DctPushConstants;
+use crate::types::*;
+
+use ae::*;
+use after_effects as ae;
 
 pub fn render(
     state: &mut super::PluginState,
-    instance: &mut super::Local,
+    local: &mut Local,
     extra: &SmartRenderExtra,
 ) -> Result<(), after_effects::Error> {
-    let Some(global) = state.global.as_init() else {
+    let params = load_parameters(state)?;
+
+    let Some(global) = state.global.get() else {
         return Err(Error::Generic);
     };
 
-    let Some(LocalInit {
-        ref mut ctx,
-        u16_converter,
-        fmt,
-        ..
-    }) = instance.local_init.as_mut()
-    else {
-        return Err(Error::Generic);
-    };
-
-    // Load all parameters into the shader context
-    load_parameters(ctx, state)?;
-
-    // Collect layer inputs
     let cb = extra.callbacks();
-    let mut layers: Vec<(&str, _)> = Vec::new();
 
-    // Input image (current layer)
-    if let Ok(Some(layer)) = cb.checkout_layer_pixels(INPUT_LAYER_CHECKOUT_ID as u32) {
-        layers.push(("input_image", layer));
-    }
+    let Some(input_layer) = cb.checkout_layer_pixels(INPUT_LAYER_CHECKOUT_ID as u32)? else {
+        return Ok(());
+    };
 
-    // Error matte
-    if let Ok(Some(layer)) = cb.checkout_layer_pixels(ParamIdx::ErrorMatte.idx() as u32) {
-        layers.push(("error_matte", layer));
-        // Auto-set use_error_matte
-        if let Some(mut input) = ctx.get_input_mut("use_error_matte") {
-            if let Some(b) = input.as_bool() {
-                b.current = ShaderBool::True;
-            }
-        }
-    } else {
-        ctx.remove_texture("error_matte");
-        if let Some(mut input) = ctx.get_input_mut("use_error_matte") {
-            if let Some(b) = input.as_bool() {
-                b.current = ShaderBool::False;
-            }
-        }
-    }
+    let width = input_layer.width() as u32;
+    let height = input_layer.height() as u32;
+    let input_row_bytes = input_layer.row_bytes().unsigned_abs();
 
-    // Luma quality matte
-    if let Ok(Some(layer)) = cb.checkout_layer_pixels(ParamIdx::LumaQualityMatte.idx() as u32) {
-        layers.push(("luma_quality_matte", layer));
-        // Auto-set use_luma_quality
-        if let Some(mut input) = ctx.get_input_mut("use_luma_quality") {
-            if let Some(b) = input.as_bool() {
-                b.current = ShaderBool::True;
-            }
-        }
-    } else {
-        ctx.remove_texture("luma_quality_matte");
-        if let Some(mut input) = ctx.get_input_mut("use_luma_quality") {
-            if let Some(b) = input.as_bool() {
-                b.current = ShaderBool::False;
-            }
-        }
-    }
+    let error_matte_layer = cb
+        .checkout_layer_pixels(ParamIdx::ErrorMatte.idx() as u32)
+        .ok()
+        .flatten();
+    let luma_quality_layer = cb
+        .checkout_layer_pixels(ParamIdx::LumaQualityMatte.idx() as u32)
+        .ok()
+        .flatten();
 
-    // Always set ae_channel_order to true
-    if let Some(mut input) = ctx.get_input_mut("ae_channel_order") {
-        if let Some(b) = input.as_bool() {
-            b.current = ShaderBool::True;
-        }
-    }
+    let mut push_constants = params;
+    push_constants.use_error_matte = if error_matte_layer.is_some() { 1 } else { 0 };
+    push_constants.use_luma_quality = if luma_quality_layer.is_some() { 1 } else { 0 };
 
-    if let Some(converter) = u16_converter {
-        converter.prepare_cpu_layer_inputs(&global.device, &global.queue, layers.into_iter());
+    let Some(mut out_layer) = cb.checkout_output()? else {
+        return Ok(());
+    };
+    let output_row_bytes = out_layer.row_bytes().unsigned_abs();
 
-        let Some(mut out_layer) = cb.checkout_output()? else {
-            return Ok(());
-        };
+    let bit_depth = BitDepth::from(extra.bit_depth());
 
-        ctx.update_resolution([out_layer.width() as f32, out_layer.height() as f32]);
-        converter.render_u15_to_cpu_buffer(&mut out_layer, &global.device, &global.queue, ctx);
-    } else {
-        for (name, layer) in layers.iter() {
-            let real_fmt = *fmt;
-            ctx.load_texture(
-                name,
-                TextureDesc {
-                    width: layer.width() as u32,
-                    height: layer.height() as u32,
-                    stride: Some(layer.buffer_stride() as u32),
-                    data: layer.buffer(),
-                    format: real_fmt,
-                },
-                &global.device,
-                &global.queue,
-            );
-        }
+    // Get row_bytes for each matte layer (they may differ from input)
+    let error_matte_row_bytes = error_matte_layer
+        .as_ref()
+        .map(|l| l.row_bytes().unsigned_abs());
+    let luma_quality_row_bytes = luma_quality_layer
+        .as_ref()
+        .map(|l| l.row_bytes().unsigned_abs());
 
-        let Some(mut out_layer) = cb.checkout_output()? else {
-            return Ok(());
-        };
+    // Get thread-local pipeline (lazily initialized)
+    let pipeline = local.pipeline(&global.device);
 
-        let width = out_layer.width() as u32;
-        let height = out_layer.height() as u32;
-        let stride = out_layer.buffer_stride() as u32;
-
-        let limits = global.device.limits();
-        let buffer_size = stride as u64 * height as u64;
-        if buffer_size > limits.max_buffer_size {
-            state.out_data.set_error_msg(&format!(
-                "Buffer size {} exceeds GPU max {}",
-                buffer_size, limits.max_buffer_size
-            ));
-            return Ok(());
-        }
-        if width > limits.max_texture_dimension_2d || height > limits.max_texture_dimension_2d {
-            state.out_data.set_error_msg(&format!(
-                "Texture {}x{} exceeds GPU max {}",
-                width, height, limits.max_texture_dimension_2d
-            ));
-            return Ok(());
-        }
-
-        ctx.update_resolution([width as f32, height as f32]);
-        ctx.render_to_slice(
-            &global.queue,
-            &global.device,
-            width,
-            height,
-            out_layer.buffer_mut(),
-            Some(stride),
-        );
-    }
+    pipeline.render(
+        &global.device,
+        &global.queue,
+        push_constants,
+        input_layer.buffer(),
+        out_layer.buffer_mut(),
+        width,
+        height,
+        input_row_bytes,
+        output_row_bytes,
+        bit_depth,
+        error_matte_layer.as_ref().map(|l| l.buffer()),
+        error_matte_row_bytes,
+        luma_quality_layer.as_ref().map(|l| l.buffer()),
+        luma_quality_row_bytes,
+    );
 
     Ok(())
 }
 
-fn load_parameters(
-    ctx: &mut tweak_shader::RenderContext,
-    state: &super::PluginState,
-) -> Result<(), after_effects::Error> {
+fn load_parameters(state: &super::PluginState) -> Result<DctPushConstants, after_effects::Error> {
     let in_data = state.in_data;
     let current_time = in_data.current_time();
-    let current_frame = in_data.current_frame();
-    let current_delta = in_data.time_step();
     let time_step = in_data.time_step();
     let time_scale = in_data.time_scale();
 
@@ -165,11 +94,6 @@ fn load_parameters(
     )?
     .as_float_slider()?
     .value() as f32;
-    if let Some(mut input) = ctx.get_input_mut("quality") {
-        if let Some(f) = input.as_float() {
-            f.current = quality;
-        }
-    }
 
     // Block Size
     let block_size = ParamDef::checkout(
@@ -181,15 +105,10 @@ fn load_parameters(
         None,
     )?
     .as_slider()?
-    .value();
-    if let Some(mut input) = ctx.get_input_mut("block_size") {
-        if let Some(i) = input.as_int() {
-            i.value.current = block_size;
-        }
-    }
+    .value() as u32;
 
     // Coefficient Threshold
-    let coef_threshold = ParamDef::checkout(
+    let coefficient_threshold = ParamDef::checkout(
         in_data,
         ParamIdx::CoefficientThreshold.idx(),
         current_time,
@@ -199,11 +118,6 @@ fn load_parameters(
     )?
     .as_float_slider()?
     .value() as f32;
-    if let Some(mut input) = ctx.get_input_mut("coefficient_threshold") {
-        if let Some(f) = input.as_float() {
-            f.current = coef_threshold;
-        }
-    }
 
     // Blend Original
     let blend_original = ParamDef::checkout(
@@ -216,11 +130,6 @@ fn load_parameters(
     )?
     .as_float_slider()?
     .value() as f32;
-    if let Some(mut input) = ctx.get_input_mut("blend_original") {
-        if let Some(f) = input.as_float() {
-            f.current = blend_original;
-        }
-    }
 
     // Error Rate
     let error_rate = ParamDef::checkout(
@@ -233,14 +142,9 @@ fn load_parameters(
     )?
     .as_float_slider()?
     .value() as f32;
-    if let Some(mut input) = ctx.get_input_mut("error_rate") {
-        if let Some(f) = input.as_float() {
-            f.current = error_rate;
-        }
-    }
 
     // Error Brightness Min
-    let val = ParamDef::checkout(
+    let error_brightness_min = ParamDef::checkout(
         in_data,
         ParamIdx::ErrorBrightnessMin.idx(),
         current_time,
@@ -250,14 +154,9 @@ fn load_parameters(
     )?
     .as_float_slider()?
     .value() as f32;
-    if let Some(mut input) = ctx.get_input_mut("error_brightness_min") {
-        if let Some(f) = input.as_float() {
-            f.current = val;
-        }
-    }
 
     // Error Brightness Max
-    let val = ParamDef::checkout(
+    let error_brightness_max = ParamDef::checkout(
         in_data,
         ParamIdx::ErrorBrightnessMax.idx(),
         current_time,
@@ -267,14 +166,9 @@ fn load_parameters(
     )?
     .as_float_slider()?
     .value() as f32;
-    if let Some(mut input) = ctx.get_input_mut("error_brightness_max") {
-        if let Some(f) = input.as_float() {
-            f.current = val;
-        }
-    }
 
     // Error Blue Yellow Min
-    let val = ParamDef::checkout(
+    let error_blue_yellow_min = ParamDef::checkout(
         in_data,
         ParamIdx::ErrorBlueYellowMin.idx(),
         current_time,
@@ -284,14 +178,9 @@ fn load_parameters(
     )?
     .as_float_slider()?
     .value() as f32;
-    if let Some(mut input) = ctx.get_input_mut("error_blue_yellow_min") {
-        if let Some(f) = input.as_float() {
-            f.current = val;
-        }
-    }
 
     // Error Blue Yellow Max
-    let val = ParamDef::checkout(
+    let error_blue_yellow_max = ParamDef::checkout(
         in_data,
         ParamIdx::ErrorBlueYellowMax.idx(),
         current_time,
@@ -301,14 +190,9 @@ fn load_parameters(
     )?
     .as_float_slider()?
     .value() as f32;
-    if let Some(mut input) = ctx.get_input_mut("error_blue_yellow_max") {
-        if let Some(f) = input.as_float() {
-            f.current = val;
-        }
-    }
 
     // Error Red Cyan Min
-    let val = ParamDef::checkout(
+    let error_red_cyan_min = ParamDef::checkout(
         in_data,
         ParamIdx::ErrorRedCyanMin.idx(),
         current_time,
@@ -318,14 +202,9 @@ fn load_parameters(
     )?
     .as_float_slider()?
     .value() as f32;
-    if let Some(mut input) = ctx.get_input_mut("error_red_cyan_min") {
-        if let Some(f) = input.as_float() {
-            f.current = val;
-        }
-    }
 
     // Error Red Cyan Max
-    let val = ParamDef::checkout(
+    let error_red_cyan_max = ParamDef::checkout(
         in_data,
         ParamIdx::ErrorRedCyanMax.idx(),
         current_time,
@@ -335,11 +214,6 @@ fn load_parameters(
     )?
     .as_float_slider()?
     .value() as f32;
-    if let Some(mut input) = ctx.get_input_mut("error_red_cyan_max") {
-        if let Some(f) = input.as_float() {
-            f.current = val;
-        }
-    }
 
     // Seed
     let seed = ParamDef::checkout(
@@ -351,15 +225,10 @@ fn load_parameters(
         None,
     )?
     .as_slider()?
-    .value();
-    if let Some(mut input) = ctx.get_input_mut("seed") {
-        if let Some(i) = input.as_int() {
-            i.value.current = seed;
-        }
-    }
+    .value() as u32;
 
     // Error Matte Mode
-    let mode = ParamDef::checkout(
+    let error_matte_mode = ParamDef::checkout(
         in_data,
         ParamIdx::ErrorMatteMode.idx(),
         current_time,
@@ -368,18 +237,44 @@ fn load_parameters(
         None,
     )?
     .as_popup()?
-    .value()
+    .value() as u32
         - 1; // AE popups are 1-indexed
-    if let Some(mut input) = ctx.get_input_mut("error_matte_mode") {
-        if let Some(i) = input.as_int() {
-            i.value.current = mode;
-        }
-    }
 
-    // Update time/frame
-    ctx.update_time(current_time as f32 / time_scale as f32);
-    ctx.update_frame_count(current_frame as u32);
-    ctx.update_delta(current_delta as f32);
+    // Chroma Subsampling
+    let chroma_subsampling = ParamDef::checkout(
+        in_data,
+        ParamIdx::ChromaSubsampling.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_popup()?
+    .value() as u32
+        - 1; // AE popups are 1-indexed
 
-    Ok(())
+    let mut params = DctPushConstants {
+        width: 0,
+        height: 0,
+        pass_index: 0,
+        block_size,
+        quantization_step: 0.0,
+        coefficient_threshold,
+        blend_original,
+        error_rate,
+        error_brightness_min,
+        error_brightness_max,
+        error_blue_yellow_min,
+        error_blue_yellow_max,
+        error_red_cyan_min,
+        error_red_cyan_max,
+        seed,
+        error_matte_mode,
+        use_error_matte: 0,
+        use_luma_quality: 0,
+        ae_channel_order: 1,
+        chroma_subsampling,
+    };
+    params.set_quality(quality);
+    Ok(params)
 }
