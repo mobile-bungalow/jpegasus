@@ -25,6 +25,8 @@ layout(push_constant) uniform ShaderInputs {
 #pragma input(int, name="seed", default=0, min=0, max=10000)
 #pragma input(int, name="error_matte_mode", default=0, values=[0,1], labels=["Luminance","RGB Drive YCbCr"])
 #pragma input(bool, name="use_error_matte", default=false)
+#pragma input(float, name="blend_original", default=0.0, min=0.0, max=1.0)
+#pragma input(bool, name="use_luma_quality", default=false)
 layout(set = 1, binding = 0) uniform Params {
     float quality;
     int block_size;
@@ -39,6 +41,8 @@ layout(set = 1, binding = 0) uniform Params {
     int seed;
     int error_matte_mode;
     int use_error_matte;
+    float blend_original;
+    int use_luma_quality;
 };
 
 #pragma input(image, name="input_image")
@@ -46,6 +50,9 @@ layout(set = 0, binding = 0) uniform texture2D input_image;
 
 #pragma input(image, name="error_matte")
 layout(set = 0, binding = 8) uniform texture2D error_matte;
+
+#pragma input(image, name="luma_quality_matte")
+layout(set = 0, binding = 9) uniform texture2D luma_quality_matte;
 
 #pragma target(name="output_image", screen)
 layout(rgba8, set = 0, binding = 1) uniform writeonly image2D output_image;
@@ -105,14 +112,16 @@ vec3 ycbcr_to_rgb(vec3 ycbcr) {
     );
 }
 
-vec3 get_matte_score(ivec2 px) {
+vec3 sample_error_matte(ivec2 px) {
     vec4 matte = texelFetch(error_matte, px, 0);
-    if (error_matte_mode == 0) {
-        float lum = 0.299 * matte.r + 0.587 * matte.g + 0.114 * matte.b;
-        return vec3(lum);
-    } else {
-        return matte.rgb;
-    }
+    float lum = 0.299 * matte.r + 0.587 * matte.g + 0.114 * matte.b;
+    float use_lum = float(1 - error_matte_mode);
+    return mix(matte.rgb, vec3(lum), use_lum);
+}
+
+float sample_luma_quality(ivec2 px) {
+    vec4 matte = texelFetch(luma_quality_matte, px, 0);
+    return 0.299 * matte.r + 0.587 * matte.g + 0.114 * matte.b;
 }
 
 vec3 apply_error(vec3 rgb, ivec2 px, ivec2 block) {
@@ -122,7 +131,7 @@ vec3 apply_error(vec3 rgb, ivec2 px, ivec2 block) {
         if (block_hash * 100.0 >= error_rate) return rgb;
         score = vec3(hash(vec2(px), seed));
     } else {
-        score = get_matte_score(px);
+        score = sample_error_matte(px);
     }
 
     vec3 ycbcr = rgb_to_ycbcr(rgb);
@@ -179,8 +188,9 @@ void main() {
 
         sum = apply_error(sum, px, block);
 
-        // Quantize
-        float compression = (101.0 - quality) / 100.0;
+        float matte_val = sample_luma_quality(px);
+        float effective_quality = mix(quality, matte_val * 100.0, float(use_luma_quality));
+        float compression = (101.0 - effective_quality) / 100.0;
         float q = compression * compression * compression * 2.0;
         imageStore(dct_cols, px, vec4(quantize(sum, q), 1.0));
     } else if (pass_index == 2) {
@@ -195,7 +205,6 @@ void main() {
         sum *= norm;
         imageStore(idct_rows, px, vec4(sum, 1.0));
     } else {
-        // Inverse DCT on rows
         vec3 sum = vec3(0.0);
         for (int u = 0; u < N; u++) {
             int sx = block.x + u;
@@ -206,6 +215,8 @@ void main() {
         sum *= norm;
 
         vec3 rgb = sum + 0.5;
+        vec3 original = texelFetch(input_image, px, 0).rgb;
+        rgb = mix(rgb, original, blend_original);
         imageStore(output_image, px, vec4(clamp(rgb, 0.0, 1.0), 1.0));
     }
 }
