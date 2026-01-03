@@ -1,6 +1,8 @@
+use tweak_shader::input_type::ShaderBool;
 use tweak_shader::TextureDesc;
 
 use super::*;
+use crate::param_util::INPUT_LAYER_CHECKOUT_ID;
 
 pub fn render(
     state: &mut super::PluginState,
@@ -11,29 +13,73 @@ pub fn render(
         return Err(Error::Generic);
     };
 
-    let local = instance.local_init.as_mut();
     let Some(LocalInit {
         ref mut ctx,
         u16_converter,
         fmt,
         ..
-    }) = local
+    }) = instance.local_init.as_mut()
     else {
         return Err(Error::Generic);
     };
-    let layers = load_parameters(ctx, state)?;
 
+    // Load all parameters into the shader context
+    load_parameters(ctx, state)?;
+
+    // Collect layer inputs
     let cb = extra.callbacks();
+    let mut layers: Vec<(&str, _)> = Vec::new();
 
-    let layer_iter = layers.iter().filter_map(|(name, index)| {
-        Some((
-            name.as_str(),
-            cb.checkout_layer_pixels(index.idx() as u32).ok()??,
-        ))
-    });
+    // Input image (current layer)
+    if let Ok(Some(layer)) = cb.checkout_layer_pixels(INPUT_LAYER_CHECKOUT_ID as u32) {
+        layers.push(("input_image", layer));
+    }
+
+    // Error matte
+    if let Ok(Some(layer)) = cb.checkout_layer_pixels(ParamIdx::ErrorMatte.idx() as u32) {
+        layers.push(("error_matte", layer));
+        // Auto-set use_error_matte
+        if let Some(mut input) = ctx.get_input_mut("use_error_matte") {
+            if let Some(b) = input.as_bool() {
+                b.current = ShaderBool::True;
+            }
+        }
+    } else {
+        ctx.remove_texture("error_matte");
+        if let Some(mut input) = ctx.get_input_mut("use_error_matte") {
+            if let Some(b) = input.as_bool() {
+                b.current = ShaderBool::False;
+            }
+        }
+    }
+
+    // Luma quality matte
+    if let Ok(Some(layer)) = cb.checkout_layer_pixels(ParamIdx::LumaQualityMatte.idx() as u32) {
+        layers.push(("luma_quality_matte", layer));
+        // Auto-set use_luma_quality
+        if let Some(mut input) = ctx.get_input_mut("use_luma_quality") {
+            if let Some(b) = input.as_bool() {
+                b.current = ShaderBool::True;
+            }
+        }
+    } else {
+        ctx.remove_texture("luma_quality_matte");
+        if let Some(mut input) = ctx.get_input_mut("use_luma_quality") {
+            if let Some(b) = input.as_bool() {
+                b.current = ShaderBool::False;
+            }
+        }
+    }
+
+    // Always set ae_channel_order to true
+    if let Some(mut input) = ctx.get_input_mut("ae_channel_order") {
+        if let Some(b) = input.as_bool() {
+            b.current = ShaderBool::True;
+        }
+    }
 
     if let Some(converter) = u16_converter {
-        converter.prepare_cpu_layer_inputs(&global.device, &global.queue, layer_iter);
+        converter.prepare_cpu_layer_inputs(&global.device, &global.queue, layers.into_iter());
 
         let Some(mut out_layer) = cb.checkout_output()? else {
             return Ok(());
@@ -42,7 +88,7 @@ pub fn render(
         ctx.update_resolution([out_layer.width() as f32, out_layer.height() as f32]);
         converter.render_u15_to_cpu_buffer(&mut out_layer, &global.device, &global.queue, ctx);
     } else {
-        for (name, layer) in layer_iter {
+        for (name, layer) in layers.iter() {
             let real_fmt = *fmt;
             ctx.load_texture(
                 name,
@@ -97,122 +143,243 @@ pub fn render(
     Ok(())
 }
 
-pub fn load_parameters(
+fn load_parameters(
     ctx: &mut tweak_shader::RenderContext,
     state: &super::PluginState,
-) -> Result<Vec<(String, ParamIdx)>, after_effects::Error> {
+) -> Result<(), after_effects::Error> {
     let in_data = state.in_data;
     let current_time = in_data.current_time();
-    let current_frame = state.in_data.current_frame();
+    let current_frame = in_data.current_frame();
     let current_delta = in_data.time_step();
     let time_step = in_data.time_step();
     let time_scale = in_data.time_scale();
-    let mut non_null_images = Vec::new();
-    let mut null_images = Vec::new();
 
-    let is_image_filter = state
-        .params
-        .get(ParamIdx::IsImageFilter)?
-        .as_checkbox()?
-        .value();
-
-    let mut first_image = true;
-
-    for (i, (name, mut input)) in ctx.iter_inputs_mut().enumerate() {
-        let index = param_util::index_from_mut(i, &mut input);
-
-        let mut param = ParamDef::checkout(
-            in_data,
-            index.idx(),
-            current_time,
-            time_step,
-            time_scale,
-            None,
-        )?;
-
-        match param.as_param_mut()? {
-            Param::CheckBox(cb) => {
-                if let Some(boolean) = input.as_bool() {
-                    boolean.current = if cb.value() {
-                        tweak_shader::input_type::ShaderBool::True
-                    } else {
-                        tweak_shader::input_type::ShaderBool::False
-                    };
-                }
-            }
-            Param::Color(co) => {
-                if let Some(color) = input.as_color() {
-                    let val = co.value();
-                    color.current = [
-                        val.red as f32 / 255.0,
-                        val.green as f32 / 255.0,
-                        val.blue as f32 / 255.0,
-                        val.alpha as f32 / 255.0,
-                    ];
-                }
-            }
-            Param::FloatSlider(fl) => {
-                if let Some(float) = input.as_float() {
-                    float.current = fl.value() as f32;
-                }
-            }
-            Param::Slider(int) => {
-                if let Some(ount) = input.as_int() {
-                    ount.value.current = int.value();
-                }
-            }
-            Param::Point(pt) => {
-                if let Some(point) = input.as_point() {
-                    point.current = pt.value().into();
-                }
-            }
-            Param::Popup(int) => {
-                if let Some(ount) = input.as_int() {
-                    if let Some(entry) = ount
-                        .labels
-                        .as_ref()
-                        .and_then(|l| l.get(int.value() as usize - 1))
-                        .map(|(_, v)| v)
-                    {
-                        ount.value.current = *entry;
-                    }
-                }
-            }
-            Param::Layer(l) => {
-                if first_image && is_image_filter {
-                    first_image = false;
-                    non_null_images.push((name.to_owned(), INPUT_LAYER_CHECKOUT_ID));
-                    continue;
-                }
-                if l.value().is_some() {
-                    non_null_images.push((name.to_owned(), index));
-                } else {
-                    null_images.push(name.to_owned());
-                }
-            }
-            _ => {}
+    // Quality
+    let quality = ParamDef::checkout(
+        in_data,
+        ParamIdx::Quality.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_float_slider()?
+    .value() as f32;
+    if let Some(mut input) = ctx.get_input_mut("quality") {
+        if let Some(f) = input.as_float() {
+            f.current = quality;
         }
     }
 
-    for image_name in null_images {
-        ctx.remove_texture(&image_name);
+    // Block Size
+    let block_size = ParamDef::checkout(
+        in_data,
+        ParamIdx::BlockSize.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_slider()?
+    .value();
+    if let Some(mut input) = ctx.get_input_mut("block_size") {
+        if let Some(i) = input.as_int() {
+            i.value.current = block_size;
+        }
     }
 
-    let use_layer_time = state
-        .params
-        .get(ParamIdx::UseLayerTime)?
-        .as_checkbox()?
-        .value();
-
-    if !use_layer_time {
-        let time = state.params.get(ParamIdx::Time)?.as_float_slider()?.value();
-        ctx.update_time(time as f32);
-    } else {
-        ctx.update_time(current_time as f32 / time_scale as f32);
+    // Coefficient Threshold
+    let coef_threshold = ParamDef::checkout(
+        in_data,
+        ParamIdx::CoefficientThreshold.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_float_slider()?
+    .value() as f32;
+    if let Some(mut input) = ctx.get_input_mut("coefficient_threshold") {
+        if let Some(f) = input.as_float() {
+            f.current = coef_threshold;
+        }
     }
 
+    // Blend Original
+    let blend_original = ParamDef::checkout(
+        in_data,
+        ParamIdx::BlendOriginal.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_float_slider()?
+    .value() as f32;
+    if let Some(mut input) = ctx.get_input_mut("blend_original") {
+        if let Some(f) = input.as_float() {
+            f.current = blend_original;
+        }
+    }
+
+    // Error Rate
+    let error_rate = ParamDef::checkout(
+        in_data,
+        ParamIdx::ErrorRate.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_float_slider()?
+    .value() as f32;
+    if let Some(mut input) = ctx.get_input_mut("error_rate") {
+        if let Some(f) = input.as_float() {
+            f.current = error_rate;
+        }
+    }
+
+    // Error Brightness Min
+    let val = ParamDef::checkout(
+        in_data,
+        ParamIdx::ErrorBrightnessMin.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_float_slider()?
+    .value() as f32;
+    if let Some(mut input) = ctx.get_input_mut("error_brightness_min") {
+        if let Some(f) = input.as_float() {
+            f.current = val;
+        }
+    }
+
+    // Error Brightness Max
+    let val = ParamDef::checkout(
+        in_data,
+        ParamIdx::ErrorBrightnessMax.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_float_slider()?
+    .value() as f32;
+    if let Some(mut input) = ctx.get_input_mut("error_brightness_max") {
+        if let Some(f) = input.as_float() {
+            f.current = val;
+        }
+    }
+
+    // Error Blue Yellow Min
+    let val = ParamDef::checkout(
+        in_data,
+        ParamIdx::ErrorBlueYellowMin.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_float_slider()?
+    .value() as f32;
+    if let Some(mut input) = ctx.get_input_mut("error_blue_yellow_min") {
+        if let Some(f) = input.as_float() {
+            f.current = val;
+        }
+    }
+
+    // Error Blue Yellow Max
+    let val = ParamDef::checkout(
+        in_data,
+        ParamIdx::ErrorBlueYellowMax.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_float_slider()?
+    .value() as f32;
+    if let Some(mut input) = ctx.get_input_mut("error_blue_yellow_max") {
+        if let Some(f) = input.as_float() {
+            f.current = val;
+        }
+    }
+
+    // Error Red Cyan Min
+    let val = ParamDef::checkout(
+        in_data,
+        ParamIdx::ErrorRedCyanMin.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_float_slider()?
+    .value() as f32;
+    if let Some(mut input) = ctx.get_input_mut("error_red_cyan_min") {
+        if let Some(f) = input.as_float() {
+            f.current = val;
+        }
+    }
+
+    // Error Red Cyan Max
+    let val = ParamDef::checkout(
+        in_data,
+        ParamIdx::ErrorRedCyanMax.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_float_slider()?
+    .value() as f32;
+    if let Some(mut input) = ctx.get_input_mut("error_red_cyan_max") {
+        if let Some(f) = input.as_float() {
+            f.current = val;
+        }
+    }
+
+    // Seed
+    let seed = ParamDef::checkout(
+        in_data,
+        ParamIdx::Seed.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_slider()?
+    .value();
+    if let Some(mut input) = ctx.get_input_mut("seed") {
+        if let Some(i) = input.as_int() {
+            i.value.current = seed;
+        }
+    }
+
+    // Error Matte Mode
+    let mode = ParamDef::checkout(
+        in_data,
+        ParamIdx::ErrorMatteMode.idx(),
+        current_time,
+        time_step,
+        time_scale,
+        None,
+    )?
+    .as_popup()?
+    .value()
+        - 1; // AE popups are 1-indexed
+    if let Some(mut input) = ctx.get_input_mut("error_matte_mode") {
+        if let Some(i) = input.as_int() {
+            i.value.current = mode;
+        }
+    }
+
+    // Update time/frame
+    ctx.update_time(current_time as f32 / time_scale as f32);
     ctx.update_frame_count(current_frame as u32);
     ctx.update_delta(current_delta as f32);
 
-    Ok(non_null_images)
+    Ok(())
 }

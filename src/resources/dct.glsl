@@ -27,6 +27,7 @@ layout(push_constant) uniform ShaderInputs {
 #pragma input(bool, name="use_error_matte", default=false)
 #pragma input(float, name="blend_original", default=0.0, min=0.0, max=1.0)
 #pragma input(bool, name="use_luma_quality", default=false)
+#pragma input(bool, name="ae_channel_order", default=true)
 layout(set = 1, binding = 0) uniform Params {
     float quality;
     int block_size;
@@ -43,6 +44,7 @@ layout(set = 1, binding = 0) uniform Params {
     int use_error_matte;
     float blend_original;
     int use_luma_quality;
+    int ae_channel_order;
 };
 
 #pragma input(image, name="input_image")
@@ -76,6 +78,15 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 const float PI = 3.14159265359;
 const float SQRT_HALF = 0.707106781;
+
+// AE uses ARGB, shader uses RGBA - swizzle based on ae_channel_order
+vec4 swizzle_in(vec4 c) {
+    return mix(c, c.gbar, float(ae_channel_order));
+}
+
+vec4 swizzle_out(vec4 c) {
+    return mix(c, c.argb, float(ae_channel_order));
+}
 
 float hash(vec2 p, int s) {
     vec3 p3 = fract(vec3(p.xyx + float(s)) * 0.1031);
@@ -113,14 +124,14 @@ vec3 ycbcr_to_rgb(vec3 ycbcr) {
 }
 
 vec3 sample_error_matte(ivec2 px) {
-    vec4 matte = texelFetch(error_matte, px, 0);
+    vec4 matte = swizzle_in(texelFetch(error_matte, px, 0));
     float lum = 0.299 * matte.r + 0.587 * matte.g + 0.114 * matte.b;
     float use_lum = float(1 - error_matte_mode);
     return mix(matte.rgb, vec3(lum), use_lum);
 }
 
 float sample_luma_quality(ivec2 px) {
-    vec4 matte = texelFetch(luma_quality_matte, px, 0);
+    vec4 matte = swizzle_in(texelFetch(luma_quality_matte, px, 0));
     return 0.299 * matte.r + 0.587 * matte.g + 0.114 * matte.b;
 }
 
@@ -163,7 +174,7 @@ void main() {
         for (int x = 0; x < N; x++) {
             int sx = block.x + x;
             if (sx >= size.x) break;
-            vec3 pixel = texelFetch(input_image, ivec2(sx, px.y), 0).rgb - 0.5;
+            vec3 pixel = swizzle_in(texelFetch(input_image, ivec2(sx, px.y), 0)).rgb - 0.5;
             sum += pixel * dct_basis(x, local.x, N);
         }
         sum *= norm * dct_coeff(local.x);
@@ -215,8 +226,8 @@ void main() {
         sum *= norm;
 
         vec3 rgb = sum + 0.5;
-        vec3 original = texelFetch(input_image, px, 0).rgb;
+        vec3 original = swizzle_in(texelFetch(input_image, px, 0)).rgb;
         rgb = mix(rgb, original, blend_original);
-        imageStore(output_image, px, vec4(clamp(rgb, 0.0, 1.0), 1.0));
+        imageStore(output_image, px, swizzle_out(vec4(clamp(rgb, 0.0, 1.0), 1.0)));
     }
 }

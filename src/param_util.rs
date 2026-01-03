@@ -1,424 +1,198 @@
 use crate::types::ParamIdx;
-use ae::aegp::DynamicStreamFlags;
-use ae::ParamFlag;
-use after_effects::aegp::suites;
-use after_effects::{self as ae, Pixel8};
-use after_effects::{Error, InData};
-use tweak_shader::input_type::InputType;
+use after_effects::{self as ae, Error};
 
-pub const MAX_INPUTS: i32 = 32;
-pub const PARAM_TYPE_COUNT: i32 = 7;
-pub const STATIC_PARAMS_OFFSET: i32 = ParamIdx::UseLayerTime.idx() + 1;
-pub const PARAM_COUNT: i32 = (PARAM_TYPE_COUNT * MAX_INPUTS) + STATIC_PARAMS_OFFSET;
+pub const INPUT_LAYER_CHECKOUT_ID: i32 = 100;
 
-pub enum Variant {
-    Float = 0,
-    Int,
-    IntList,
-    Point,
-    Bool,
-    Color,
-    Image,
-}
-
-pub fn index_from_mut(index: usize, variant: &mut tweak_shader::input_type::MutInput) -> ParamIdx {
-    let variant = match variant.variant() {
-        tweak_shader::input_type::InputVariant::Float => Variant::Float as _,
-        tweak_shader::input_type::InputVariant::Int
-            if variant.as_int().is_some_and(|e| e.labels.is_none()) =>
-        {
-            Variant::Int as _
-        }
-        tweak_shader::input_type::InputVariant::Int => Variant::IntList as _,
-        tweak_shader::input_type::InputVariant::Point => Variant::Point as _,
-        tweak_shader::input_type::InputVariant::Bool => Variant::Bool as _,
-        tweak_shader::input_type::InputVariant::Color => Variant::Color as _,
-        tweak_shader::input_type::InputVariant::Image => Variant::Image as _,
-        _ => 0,
-    };
-
-    ParamIdx::Dynamic(((index as i32 * PARAM_TYPE_COUNT) + STATIC_PARAMS_OFFSET + variant) as u8)
-}
-
-pub fn as_param_index(index: usize, variant: &tweak_shader::input_type::InputType) -> ParamIdx {
-    let variant = match variant {
-        tweak_shader::input_type::InputType::Float(_) => Variant::Float as _,
-        tweak_shader::input_type::InputType::Int(_, None) => Variant::Int as _,
-        tweak_shader::input_type::InputType::Int(_, Some(_)) => Variant::IntList as _,
-        tweak_shader::input_type::InputType::Point(_) => Variant::Point as _,
-        tweak_shader::input_type::InputType::Bool(_) => Variant::Bool as _,
-        tweak_shader::input_type::InputType::Color(_) => Variant::Color as _,
-        tweak_shader::input_type::InputType::Image(_) => Variant::Image as _,
-        _ => 0,
-    };
-
-    ParamIdx::Dynamic(((index as i32 * PARAM_TYPE_COUNT) + STATIC_PARAMS_OFFSET + variant) as u8)
-}
-
-pub fn update_param_defaults_and_labels(
-    state: &mut crate::PluginState,
-    local: &mut crate::Local,
-) -> Result<(), ae::Error> {
-    let Some(local_init) = local.local_init.as_mut() else {
-        for i in ParamIdx::UnloadButton.idx()..PARAM_COUNT {
-            set_param_visibility(state.in_data, ParamIdx::Dynamic(i as u8), false)?;
-        }
-        set_param_visibility(state.in_data, ParamIdx::LoadButton, true)?;
-
-        return Ok(());
-    };
-
-    if !state
-        .params
-        .get(ParamIdx::UseLayerTime)?
-        .as_checkbox()?
-        .value()
-    {
-        set_param_visibility(state.in_data, ParamIdx::Time, true)?;
-    }
-
-    if !local_init.needs_param_visibility_reset() {
-        return Ok(());
-    }
-
-    let param_util_suite = ae::pf::suites::ParamUtils::new()?;
-    for (i, (name, var)) in local_init.ctx.iter_inputs().enumerate() {
-        let index = as_param_index(i, var);
-        set_param_visibility(state.in_data, index, true)?;
-        let mut def = state.params.get_mut(index)?;
-        let _ = def.set_name(name);
-        let param = def.as_param_mut()?;
-        match param {
-            ae::Param::CheckBox(mut cb) => {
-                if let InputType::Bool(b) = var {
-                    cb.set_default(b.default.is_true());
-                    cb.set_value(b.current.is_true());
-                }
-            }
-            ae::Param::Color(mut co) => {
-                if let InputType::Color(c) = var {
-                    let val = c.default;
-                    co.set_default(Pixel8 {
-                        alpha: (val[3] * 255.0) as u8,
-                        red: (val[0] * 255.0) as u8,
-                        green: (val[1] * 255.0) as u8,
-                        blue: (val[2] * 255.0) as u8,
-                    });
-
-                    let val = c.current;
-                    co.set_value(Pixel8 {
-                        alpha: (val[3] * 255.0) as u8,
-                        red: (val[0] * 255.0) as u8,
-                        green: (val[1] * 255.0) as u8,
-                        blue: (val[2] * 255.0) as u8,
-                    });
-                }
-            }
-            ae::Param::FloatSlider(mut fl) => {
-                if let InputType::Float(f) = var {
-                    fl.set_default(f.default as f64);
-                    fl.set_value(f.current as f64);
-                    fl.set_valid_min(f.min);
-                    fl.set_valid_max(f.max);
-                    fl.set_slider_min(f.min);
-                    fl.set_slider_max(f.max);
-                }
-            }
-            ae::Param::Point(mut p) => {
-                if let InputType::Point(pt) = var {
-                    p.set_default(pt.default.into());
-                    p.set_value(pt.current.into());
-                }
-            }
-            ae::Param::Popup(mut il) => {
-                if let InputType::Int(v, Some(_)) = var {
-                    il.set_value(v.current);
-                }
-            }
-            ae::Param::Slider(mut i) => {
-                if let InputType::Int(v, None) = var {
-                    i.set_default(v.default);
-                    i.set_value(v.current);
-                    i.set_valid_min(v.min);
-                    i.set_valid_max(v.max);
-                    i.set_slider_min(v.min);
-                    i.set_slider_max(v.max);
-                }
-            }
-            ae::Param::Layer(mut im) => {
-                im.set_default_to_this_layer();
-            }
-            _ => {}
-        }
-
-        def.set_value_changed();
-        param_util_suite.update_param_ui(state.in_data.effect(), index.idx(), &def)?;
-    }
-
-    local_init.finish_param_visibility_reset();
-    Ok(())
-}
-
-pub fn update_param_ui(
-    state: &mut crate::PluginState,
-    local: &mut crate::Local,
-) -> Result<(), ae::Error> {
-    let Some(local_init) = local.local_init.as_mut() else {
-        return Ok(());
-    };
-
-    for i in ParamIdx::UseLayerTime.idx()..PARAM_COUNT {
-        set_param_visibility(state.in_data, ParamIdx::Dynamic(i as u8), false)?;
-    }
-
-    if local.src.is_none() || local_init.build_error.is_some() {
-        set_param_visibility(state.in_data, ParamIdx::LoadButton, true)?;
-        set_param_visibility(state.in_data, ParamIdx::Time, false)?;
-        set_param_visibility(state.in_data, ParamIdx::UnloadButton, false)?;
-        set_param_visibility(state.in_data, ParamIdx::ReloadButton, false)?;
-        set_param_visibility(state.in_data, ParamIdx::IsImageFilter, false)?;
-    } else {
-        set_param_visibility(state.in_data, ParamIdx::LoadButton, false)?;
-        set_param_visibility(state.in_data, ParamIdx::UnloadButton, true)?;
-        set_param_visibility(state.in_data, ParamIdx::ReloadButton, true)?;
-        set_param_visibility(state.in_data, ParamIdx::UseLayerTime, true)?;
-
-        if !state
-            .params
-            .get(ParamIdx::UseLayerTime)?
-            .as_checkbox()?
-            .value()
-        {
-            set_param_visibility(state.in_data, ParamIdx::Time, true)?;
-        } else {
-            set_param_visibility(state.in_data, ParamIdx::Time, false)?;
-        }
-
-        for (i, (_, var)) in local_init.ctx.iter_inputs().enumerate() {
-            let index = as_param_index(i, var);
-            set_param_visibility(state.in_data, index, true)?;
-        }
-
-        let first_image_input = local_init
-            .ctx
-            .iter_inputs()
-            .enumerate()
-            .find(|(_, (_, ty))| ty.is_stored_as_texture());
-
-        set_param_visibility(
-            state.in_data,
-            ParamIdx::IsImageFilter,
-            first_image_input.is_some(),
-        )?;
-
-        if let Some((i, (_, var))) = first_image_input {
-            let index = as_param_index(i, var);
-
-            let is_image_filter = state
-                .params
-                .get(ParamIdx::IsImageFilter)?
-                .as_checkbox()?
-                .value();
-
-            set_param_visibility(state.in_data, index, !is_image_filter)?;
-        }
-    }
-
-    Ok(())
-}
-
-fn default_flags() -> ParamFlag {
-    ParamFlag::CANNOT_TIME_VARY
-        | ParamFlag::TWIRLY
-        | ParamFlag::SUPERVISE
-        | ParamFlag::SKIP_REVEAL_WHEN_UNHIDDEN
-}
-
-pub fn setup_static_params(params: &mut ae::Parameters<ParamIdx>) -> Result<(), Error> {
-    params.add_with_flags(
-        ParamIdx::LoadButton,
-        "Select Source",
-        ae::ButtonDef::setup(|f| {
-            f.set_label("Select Source");
+pub fn setup_params(params: &mut ae::Parameters<ParamIdx>) -> Result<(), Error> {
+    // Quality (1-100)
+    params.add(
+        ParamIdx::Quality,
+        "Quality",
+        ae::FloatSliderDef::setup(|f| {
+            f.set_default(50.0);
+            f.set_valid_min(1.0);
+            f.set_valid_max(100.0);
+            f.set_slider_min(1.0);
+            f.set_slider_max(100.0);
+            f.set_precision(1);
         }),
-        default_flags(),
-        ae::ParamUIFlags::empty(),
     )?;
 
-    params.add_with_flags(
-        ParamIdx::UnloadButton,
-        "Unload Source",
-        ae::ButtonDef::setup(|f| {
-            f.set_label("Unload Source");
+    // Block Size (2-64)
+    params.add(
+        ParamIdx::BlockSize,
+        "Block Size",
+        ae::SliderDef::setup(|f| {
+            f.set_default(8);
+            f.set_valid_min(2);
+            f.set_valid_max(64);
+            f.set_slider_min(2);
+            f.set_slider_max(64);
         }),
-        default_flags(),
-        ae::ParamUIFlags::empty(),
     )?;
 
-    params.add_with_flags(
-        ParamIdx::ReloadButton,
-        "Reload Source",
-        ae::ButtonDef::setup(|f| {
-            f.set_label("Reload Source");
+    // Coefficient Threshold (0-1)
+    params.add(
+        ParamIdx::CoefficientThreshold,
+        "Coefficient Threshold",
+        ae::FloatSliderDef::setup(|f| {
+            f.set_default(0.0);
+            f.set_valid_min(0.0);
+            f.set_valid_max(1.0);
+            f.set_slider_min(0.0);
+            f.set_slider_max(1.0);
+            f.set_precision(2);
         }),
-        default_flags(),
-        ae::ParamUIFlags::empty(),
     )?;
 
-    params.add(ParamIdx::Time, "Time", ae::FloatSliderDef::setup(float))?;
-
-    params.add_with_flags(
-        ParamIdx::IsImageFilter,
-        "Is Image Filter",
-        ae::CheckBoxDef::setup(|f| {
-            f.set_label("Enabled");
-            f.set_default(true);
+    // Blend Original (0-1)
+    params.add(
+        ParamIdx::BlendOriginal,
+        "Blend Original",
+        ae::FloatSliderDef::setup(|f| {
+            f.set_default(0.0);
+            f.set_valid_min(0.0);
+            f.set_valid_max(1.0);
+            f.set_slider_min(0.0);
+            f.set_slider_max(1.0);
+            f.set_precision(2);
         }),
-        default_flags(),
-        ae::ParamUIFlags::empty(),
     )?;
 
-    params.add_with_flags(
-        ParamIdx::UseLayerTime,
-        "Use Layer Time",
-        ae::CheckBoxDef::setup(|f| {
-            f.set_label("Enabled");
-            f.set_default(true);
+    // Error Rate (0-100)
+    params.add(
+        ParamIdx::ErrorRate,
+        "Error Rate",
+        ae::FloatSliderDef::setup(|f| {
+            f.set_default(0.0);
+            f.set_valid_min(0.0);
+            f.set_valid_max(100.0);
+            f.set_slider_min(0.0);
+            f.set_slider_max(100.0);
+            f.set_precision(1);
         }),
-        default_flags(),
-        ae::ParamUIFlags::empty(),
+    )?;
+
+    // Error Brightness Min (-1 to 1)
+    params.add(
+        ParamIdx::ErrorBrightnessMin,
+        "Error Brightness Min",
+        ae::FloatSliderDef::setup(|f| {
+            f.set_default(0.0);
+            f.set_valid_min(-1.0);
+            f.set_valid_max(1.0);
+            f.set_slider_min(-1.0);
+            f.set_slider_max(1.0);
+            f.set_precision(2);
+        }),
+    )?;
+
+    // Error Brightness Max (-1 to 1)
+    params.add(
+        ParamIdx::ErrorBrightnessMax,
+        "Error Brightness Max",
+        ae::FloatSliderDef::setup(|f| {
+            f.set_default(0.0);
+            f.set_valid_min(-1.0);
+            f.set_valid_max(1.0);
+            f.set_slider_min(-1.0);
+            f.set_slider_max(1.0);
+            f.set_precision(2);
+        }),
+    )?;
+
+    // Error Blue Yellow Min (-1 to 1)
+    params.add(
+        ParamIdx::ErrorBlueYellowMin,
+        "Error Blue Yellow Min",
+        ae::FloatSliderDef::setup(|f| {
+            f.set_default(0.0);
+            f.set_valid_min(-1.0);
+            f.set_valid_max(1.0);
+            f.set_slider_min(-1.0);
+            f.set_slider_max(1.0);
+            f.set_precision(2);
+        }),
+    )?;
+
+    // Error Blue Yellow Max (-1 to 1)
+    params.add(
+        ParamIdx::ErrorBlueYellowMax,
+        "Error Blue Yellow Max",
+        ae::FloatSliderDef::setup(|f| {
+            f.set_default(0.0);
+            f.set_valid_min(-1.0);
+            f.set_valid_max(1.0);
+            f.set_slider_min(-1.0);
+            f.set_slider_max(1.0);
+            f.set_precision(2);
+        }),
+    )?;
+
+    // Error Red Cyan Min (-1 to 1)
+    params.add(
+        ParamIdx::ErrorRedCyanMin,
+        "Error Red Cyan Min",
+        ae::FloatSliderDef::setup(|f| {
+            f.set_default(0.0);
+            f.set_valid_min(-1.0);
+            f.set_valid_max(1.0);
+            f.set_slider_min(-1.0);
+            f.set_slider_max(1.0);
+            f.set_precision(2);
+        }),
+    )?;
+
+    // Error Red Cyan Max (-1 to 1)
+    params.add(
+        ParamIdx::ErrorRedCyanMax,
+        "Error Red Cyan Max",
+        ae::FloatSliderDef::setup(|f| {
+            f.set_default(0.0);
+            f.set_valid_min(-1.0);
+            f.set_valid_max(1.0);
+            f.set_slider_min(-1.0);
+            f.set_slider_max(1.0);
+            f.set_precision(2);
+        }),
+    )?;
+
+    // Seed (0-10000)
+    params.add(
+        ParamIdx::Seed,
+        "Seed",
+        ae::SliderDef::setup(|f| {
+            f.set_default(0);
+            f.set_valid_min(0);
+            f.set_valid_max(10000);
+            f.set_slider_min(0);
+            f.set_slider_max(10000);
+        }),
+    )?;
+
+    // Error Matte Mode (dropdown)
+    params.add(
+        ParamIdx::ErrorMatteMode,
+        "Error Matte Mode",
+        ae::PopupDef::setup(|f| {
+            f.set_options(&["Luminance", "RGB Drive YCbCr"]);
+            f.set_default(1);
+        }),
+    )?;
+
+    // Error Matte (layer)
+    params.add(
+        ParamIdx::ErrorMatte,
+        "Error Matte",
+        ae::LayerDef::setup(|_| {}),
+    )?;
+
+    // Luma Quality Matte (layer)
+    params.add(
+        ParamIdx::LumaQualityMatte,
+        "Luma Quality Matte",
+        ae::LayerDef::setup(|_| {}),
     )?;
 
     Ok(())
-}
-
-pub fn create_variant_backing(params: &mut ae::Parameters<ParamIdx>) -> Result<(), Error> {
-    let mut base_index = STATIC_PARAMS_OFFSET;
-    for _ in 0..MAX_INPUTS {
-        for offset in 0..PARAM_TYPE_COUNT {
-            let name = format!("INPUT {}", base_index + offset);
-            let index = ParamIdx::Dynamic(base_index as u8 + offset as u8);
-            let ui_flags = ae::ParamUIFlags::empty();
-            let param_flag = ParamFlag::TWIRLY | ParamFlag::SKIP_REVEAL_WHEN_UNHIDDEN;
-            match offset as usize {
-                f if f == Variant::Float as usize => params.add_with_flags(
-                    index,
-                    &name,
-                    ae::FloatSliderDef::setup(float),
-                    param_flag,
-                    ui_flags,
-                )?,
-                i if i == Variant::Int as usize => params.add_with_flags(
-                    index,
-                    &name,
-                    ae::SliderDef::setup(int),
-                    param_flag,
-                    ui_flags,
-                )?,
-                i if i == Variant::IntList as usize => params.add_with_flags(
-                    index,
-                    &name,
-                    ae::PopupDef::setup(options),
-                    param_flag,
-                    ui_flags,
-                )?,
-                pt if pt == Variant::Point as usize => params.add_with_flags(
-                    index,
-                    &name,
-                    ae::PointDef::setup(point),
-                    param_flag,
-                    ui_flags,
-                )?,
-                b if b == Variant::Bool as usize => params.add_with_flags(
-                    index,
-                    &name,
-                    ae::CheckBoxDef::setup(bool),
-                    param_flag,
-                    ui_flags,
-                )?,
-                c if c == Variant::Color as usize => params.add_with_flags(
-                    index,
-                    &name,
-                    ae::ColorDef::setup(color),
-                    param_flag,
-                    ui_flags,
-                )?,
-                i if i == Variant::Image as usize => params.add_with_flags(
-                    index,
-                    &name,
-                    ae::LayerDef::setup(layer),
-                    param_flag,
-                    ui_flags,
-                )?,
-                _ => {}
-            }
-        }
-        base_index += PARAM_TYPE_COUNT;
-    }
-
-    Ok(())
-}
-
-pub fn set_param_visibility(in_data: InData, index: ParamIdx, visible: bool) -> Result<(), Error> {
-    let dyn_stream_suite = suites::DynamicStream::new()?;
-    let stream_suite = suites::Stream::new()?;
-    let interface = suites::PFInterface::new()?;
-
-    let effect = interface
-        .new_effect_for_effect(in_data.effect(), *crate::PLUGIN_ID.get().unwrap_or(&10))?;
-    let stream = stream_suite.new_effect_stream_by_index(
-        effect,
-        *crate::PLUGIN_ID.get().unwrap_or(&10),
-        index.idx(),
-    )?;
-    dyn_stream_suite.set_dynamic_stream_flag(
-        stream,
-        DynamicStreamFlags::Hidden,
-        false,
-        !visible,
-    )?;
-
-    Ok(())
-}
-
-fn layer(_f: &mut ae::LayerDef) {}
-
-fn color(f: &mut ae::ColorDef) {
-    f.set_default(ae::Pixel8 {
-        alpha: 255,
-        red: 255,
-        blue: 255,
-        green: 255,
-    });
-}
-
-fn point(f: &mut ae::PointDef) {
-    f.set_default((0.0, 0.0));
-}
-
-fn bool(f: &mut ae::CheckBoxDef) {
-    f.set_label("Enabled");
-    f.set_default(false);
-}
-
-fn options(f: &mut ae::PopupDef) {
-    f.set_options(&["option 1", "option 2", "option 3", "option 4", "option 5"]);
-    f.set_default(0);
-}
-
-fn int(f: &mut ae::SliderDef) {
-    f.set_default(0);
-    f.set_valid_min(-10_000);
-    f.set_valid_max(10_000);
-    f.set_slider_min(-100);
-    f.set_slider_max(100);
-}
-
-fn float(f: &mut ae::FloatSliderDef) {
-    f.set_default(0.);
-    f.set_valid_min(-10_000.);
-    f.set_valid_max(10_000.);
-    f.set_slider_min(0.0);
-    f.set_slider_max(1.0);
-    f.set_precision(2);
 }

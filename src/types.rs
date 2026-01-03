@@ -1,87 +1,49 @@
 use crate::u16_conversion::*;
-use crate::window_handle::WindowAndDisplayHandle;
-use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Mutex};
+use std::sync::Mutex;
+use strum::{EnumCount, EnumIter, FromRepr};
 use tweak_shader::wgpu::{self, Device, Queue};
 
-#[repr(u8)]
-#[derive(Debug, PartialEq, PartialOrd, Clone, Copy, Hash)]
-pub enum ParamIdx {
-    LoadButton = 1,
-    UnloadButton = 2,
-    ReloadButton = 3,
-    Time = 4,
-    IsImageFilter = 5,
-    UseLayerTime = 6,
-    Dynamic(u8),
-}
+// Hardcoded shader source
+pub const DCT_SHADER: &str = include_str!("./resources/dct.glsl");
 
-impl std::cmp::Eq for ParamIdx {}
+// Parameter indices matching dct.glsl inputs (starts at 1 for AE)
+#[repr(u8)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Clone, Copy, Hash, EnumIter, EnumCount, FromRepr)]
+pub enum ParamIdx {
+    Quality = 1,
+    BlockSize,
+    CoefficientThreshold,
+    BlendOriginal,
+    ErrorRate,
+    ErrorBrightnessMin,
+    ErrorBrightnessMax,
+    ErrorBlueYellowMin,
+    ErrorBlueYellowMax,
+    ErrorRedCyanMin,
+    ErrorRedCyanMax,
+    Seed,
+    ErrorMatteMode,
+    ErrorMatte,
+    LumaQualityMatte,
+}
 
 impl ParamIdx {
     pub const fn idx(&self) -> i32 {
-        match self {
-            ParamIdx::LoadButton => 1,
-            ParamIdx::UnloadButton => 2,
-            ParamIdx::ReloadButton => 3,
-            ParamIdx::Time => 4,
-            ParamIdx::IsImageFilter => 5,
-            ParamIdx::UseLayerTime => 6,
-            ParamIdx::Dynamic(x) => *x as i32,
-        }
+        *self as i32
     }
 }
 
 impl From<u8> for ParamIdx {
     fn from(value: u8) -> Self {
-        match value {
-            1 => ParamIdx::LoadButton,
-            2 => ParamIdx::UnloadButton,
-            3 => ParamIdx::ReloadButton,
-            4 => ParamIdx::Time,
-            5 => ParamIdx::IsImageFilter,
-            6 => ParamIdx::UseLayerTime,
-            _ => ParamIdx::Dynamic(value),
-        }
+        Self::from_repr(value).unwrap_or(ParamIdx::Quality)
     }
 }
 
 impl From<ParamIdx> for u8 {
     fn from(value: ParamIdx) -> Self {
-        match value {
-            ParamIdx::LoadButton => 1,
-            ParamIdx::UnloadButton => 2,
-            ParamIdx::ReloadButton => 3,
-            ParamIdx::Time => 4,
-            ParamIdx::IsImageFilter => 5,
-            ParamIdx::UseLayerTime => 6,
-            ParamIdx::Dynamic(x) => x,
-        }
+        value as u8
     }
 }
-
-#[derive(Debug)]
-pub enum JpegasusError {
-    SetUp(String),
-}
-
-impl std::fmt::Display for JpegasusError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::SetUp(s) => f.write_str(s),
-        }
-    }
-}
-
-impl From<JpegasusError> for super::Error {
-    fn from(value: JpegasusError) -> Self {
-        match value {
-            JpegasusError::SetUp(_) => Self::Generic,
-        }
-    }
-}
-
-impl std::error::Error for JpegasusError {}
 
 #[derive(Debug, Copy, Clone)]
 #[repr(i16)]
@@ -148,22 +110,15 @@ pub struct InnerGlobal {
 
 pub type LocalMutex = Mutex<Local>;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default)]
 pub struct Local {
-    #[serde(skip_serializing, skip_deserializing)]
     pub local_init: Option<LocalInit>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub src: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub src_path: Option<PathBuf>,
 }
 
 #[derive(Debug)]
 pub struct LocalInit {
     pub ctx: tweak_shader::RenderContext,
-    needs_param_setup: bool,
     pub fmt: wgpu::TextureFormat,
-    pub build_error: Option<String>,
     pub u16_converter: Option<U16ConversionContext>,
 }
 
@@ -247,24 +202,9 @@ impl Default for JpegasusGlobal {
 }
 
 impl LocalInit {
-    fn new(device: &Device, queue: &Queue, fmt: wgpu::TextureFormat, src: Option<String>) -> Self {
-        let mut build_error = None;
-
-        let ctx = src
-            .ok_or("No Source in initialization".to_owned())
-            .and_then(|src| {
-                tweak_shader::RenderContext::new(&src, fmt, device, queue)
-                    .map_err(|e| format!("{e}"))
-            });
-
-        let ctx = match ctx {
-            Ok(okay) => okay,
-            Err(e) => {
-                let error_shader = include_str!("./resources/error.glsl");
-                build_error = Some(e.to_string());
-                tweak_shader::RenderContext::new(error_shader, fmt, device, queue).unwrap()
-            }
-        };
+    pub fn new(device: &Device, queue: &Queue, fmt: wgpu::TextureFormat) -> Self {
+        let ctx = tweak_shader::RenderContext::new(DCT_SHADER, fmt, device, queue)
+            .expect("Failed to compile embedded dct.glsl shader");
 
         let u16_converter = if fmt == wgpu::TextureFormat::Rgba16Float {
             Some(U16ConversionContext::new(device, queue))
@@ -275,138 +215,26 @@ impl LocalInit {
         LocalInit {
             ctx,
             fmt,
-            needs_param_setup: true,
-            build_error,
             u16_converter,
         }
-    }
-
-    pub fn queue_param_visibility_reset(&mut self) {
-        self.needs_param_setup = true
-    }
-
-    pub fn needs_param_visibility_reset(&self) -> bool {
-        self.needs_param_setup
-    }
-
-    pub fn finish_param_visibility_reset(&mut self) {
-        self.needs_param_setup = false;
     }
 }
 
 impl Local {
     pub fn init_or_update(&mut self, device: &Device, queue: &Queue, bit_depth: BitDepth) {
-        match self.local_init {
+        let expected_fmt: wgpu::TextureFormat = bit_depth
+            .try_into()
+            .unwrap_or(wgpu::TextureFormat::Rgba8Unorm);
+
+        match &self.local_init {
             None => {
-                let expected_fmt: wgpu::TextureFormat = bit_depth
-                    .try_into()
-                    .unwrap_or(wgpu::TextureFormat::Rgba8Unorm);
-                self.local_init = Some(LocalInit::new(
-                    device,
-                    queue,
-                    expected_fmt,
-                    self.src.clone(),
-                ));
+                self.local_init = Some(LocalInit::new(device, queue, expected_fmt));
             }
             Some(LocalInit { fmt, .. }) => {
-                if let Ok(expected_fmt) = bit_depth.try_into() {
-                    if fmt != expected_fmt {
-                        self.local_init = Some(LocalInit::new(
-                            device,
-                            queue,
-                            expected_fmt,
-                            self.src.clone(),
-                        ));
-                    }
+                if *fmt != expected_fmt {
+                    self.local_init = Some(LocalInit::new(device, queue, expected_fmt));
                 }
             }
         }
-    }
-
-    pub fn launch_shader_selection_dialog(&mut self, global: &JpegasusGlobal) -> Option<String> {
-        let InnerGlobal { queue, device, .. } = global.as_init()?;
-
-        let home_dir = match homedir::get_my_home() {
-            Ok(Some(home)) => home,
-            _ => "/".into(),
-        };
-
-        let mut dialog = rfd::FileDialog::new();
-
-        if cfg!(target_os = "windows") {
-            let parent = WindowAndDisplayHandle::try_get_main_handles().ok()?;
-            dialog = dialog.set_parent(&parent);
-        }
-
-        let last_known_dir = self
-            .src_path
-            .as_ref()
-            .and_then(|p| p.parent())
-            .map(|p| p.to_owned());
-
-        let file = dialog
-            .add_filter("shader", &["glsl", "fs", "vs", "frag", "wgsl"])
-            .set_directory(last_known_dir.unwrap_or(home_dir))
-            .pick_file();
-
-        let source = file
-            .as_ref()
-            .map(|path| std::fs::read_to_string(path).unwrap_or_default());
-
-        if file.is_some() {
-            self.src_path = file;
-        }
-
-        let current_fmt = self
-            .local_init
-            .as_ref()
-            .map(|l| l.fmt)
-            .unwrap_or(wgpu::TextureFormat::Rgba8Unorm);
-
-        let mut local_init = LocalInit::new(device, queue, current_fmt, source.clone());
-        local_init.needs_param_setup = true;
-        let out = local_init.build_error.clone();
-
-        self.src = source;
-        self.local_init = Some(local_init);
-        out
-    }
-
-    pub fn unload_scene(&mut self) {
-        self.src = None;
-        self.local_init = None;
-    }
-
-    pub fn reload_last_path(&mut self, global: &JpegasusGlobal) -> Option<String> {
-        let InnerGlobal { queue, device, .. } = global.as_init()?;
-
-        let Some(src_path) = self.src_path.as_ref() else {
-            return Some(format!("The source path was invalid"));
-        };
-
-        if !src_path.exists() {
-            return Some(format!("Shader file not found: {}", src_path.display()));
-        }
-
-        let source = match std::fs::read_to_string(src_path) {
-            Ok(content) => Some(content),
-            Err(e) => {
-                return Some(format!("Failed to read shader file: {}", e));
-            }
-        };
-
-        let current_fmt = self
-            .local_init
-            .as_ref()
-            .map(|l| l.fmt)
-            .unwrap_or(wgpu::TextureFormat::Rgba8Unorm);
-
-        let mut local_init = LocalInit::new(device, queue, current_fmt, source.clone());
-        local_init.needs_param_setup = true;
-        let out = local_init.build_error.clone();
-
-        self.src = source;
-        self.local_init = Some(local_init);
-        out
     }
 }
