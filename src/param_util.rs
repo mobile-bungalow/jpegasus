@@ -30,10 +30,23 @@ pub fn setup_params(params: &mut ae::Parameters<ParamIdx>) -> Result<(), Error> 
     )?;
 
     params.add(
-        ParamIdx::CoefficientThreshold,
-        "Coefficient Threshold",
+        ParamIdx::CoefficientMin,
+        "Coefficient Min",
         ae::FloatSliderDef::setup(|f| {
             f.set_default(0.0);
+            f.set_valid_min(0.0);
+            f.set_valid_max(1.0);
+            f.set_slider_min(0.0);
+            f.set_slider_max(1.0);
+            f.set_precision(2);
+        }),
+    )?;
+
+    params.add(
+        ParamIdx::CoefficientMax,
+        "Coefficient Max",
+        ae::FloatSliderDef::setup(|f| {
+            f.set_default(1.0);
             f.set_valid_min(0.0);
             f.set_valid_max(1.0);
             f.set_slider_min(0.0);

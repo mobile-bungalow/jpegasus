@@ -38,7 +38,7 @@ fn test_dct_roundtrip() {
     let row_bytes = (w * 4) as usize;
     let mut params = DctPushConstants {
         block_size: 8,
-        ..Default::default()
+        ..DctPushConstants::new()
     };
     params.set_quality(50.0);
     pipeline.render(
@@ -52,8 +52,6 @@ fn test_dct_roundtrip() {
         row_bytes,
         row_bytes,
         BitDepth::U8,
-        None,
-        None,
         None,
         None,
     );
@@ -63,24 +61,29 @@ fn test_dct_roundtrip() {
 }
 
 #[test]
-fn bench_render() {
+fn test_error_injection() {
     let (device, queue) = gpu();
     let mut pipeline = DctPipeline::new(&device);
 
-    // Create a 1920x1080 test image
-    let w = 1920u32;
-    let h = 1080u32;
-    let input: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 256) as u8).collect();
+    let img = image::open("tests/fixtures/input.png").unwrap().to_rgba8();
+    let (w, h) = img.dimensions();
+    let input: Vec<u8> = img.into_raw();
     let mut output = vec![0u8; input.len()];
-    let row_bytes = (w * 4) as usize;
 
+    let row_bytes = (w * 4) as usize;
     let mut params = DctPushConstants {
         block_size: 8,
-        ..Default::default()
+        error_rate: 50.0,
+        error_brightness_min: -0.5,
+        error_brightness_max: 0.5,
+        error_blue_yellow_min: -0.5,
+        error_blue_yellow_max: 0.5,
+        error_red_cyan_min: -0.5,
+        error_red_cyan_max: 0.5,
+        seed: 42,
+        ..DctPushConstants::new()
     };
     params.set_quality(50.0);
-
-    // Warmup
     pipeline.render(
         &device,
         &queue,
@@ -94,13 +97,34 @@ fn bench_render() {
         BitDepth::U8,
         None,
         None,
-        None,
-        None,
     );
 
-    let iterations = 20;
-    let start = Instant::now();
-    for _ in 0..iterations {
+    let out_img = image::RgbaImage::from_raw(w, h, output).unwrap();
+    out_img.save("tests/fixtures/output_errors.png").unwrap();
+    println!("Saved tests/fixtures/output_errors.png - check for block-based errors");
+}
+
+#[test]
+fn bench_render() {
+    let (device, queue) = gpu();
+    let mut pipeline = DctPipeline::new(&device);
+
+    let w = 1920u32;
+    let h = 1080u32;
+    let input: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 256) as u8).collect();
+    let mut output = vec![0u8; input.len()];
+    let row_bytes = (w * 4) as usize;
+
+    println!("\n=== Benchmark Results (1920x1080) ===");
+
+    for block_size in [8u32, 16, 32, 64] {
+        let mut params = DctPushConstants {
+            block_size,
+            ..DctPushConstants::new()
+        };
+        params.set_quality(50.0);
+
+        // Warmup
         pipeline.render(
             &device,
             &queue,
@@ -114,19 +138,33 @@ fn bench_render() {
             BitDepth::U8,
             None,
             None,
-            None,
-            None,
         );
-    }
-    let elapsed = start.elapsed();
-    let avg_ms = elapsed.as_millis() as f64 / iterations as f64;
-    let fps = 1000.0 / avg_ms;
 
-    println!("\n=== Benchmark Results (1920x1080) ===");
-    println!("Block size: 8x8 (hardcoded)");
-    println!("Iterations: {iterations}");
-    println!("Average: {avg_ms:.2}ms per frame");
-    println!("Throughput: {fps:.1} FPS");
+        let iterations = 10;
+        let start = Instant::now();
+        for _ in 0..iterations {
+            pipeline.render(
+                &device,
+                &queue,
+                params,
+                &input,
+                &mut output,
+                w,
+                h,
+                row_bytes,
+                row_bytes,
+                BitDepth::U8,
+                None,
+                None,
+            );
+        }
+        let elapsed = start.elapsed();
+        let avg_ms = elapsed.as_millis() as f64 / iterations as f64;
+        let fps = 1000.0 / avg_ms;
+
+        println!("Block {block_size}x{block_size}: {avg_ms:.1}ms ({fps:.1} FPS)");
+    }
+
     println!("=====================================\n");
 }
 
@@ -199,7 +237,7 @@ fn test_chroma_subsampling_modes_differ() {
         let mut params = DctPushConstants {
             block_size: 16,
             chroma_subsampling: mode,
-            ..Default::default()
+            ..DctPushConstants::new()
         };
         params.set_quality(50.0);
 
@@ -219,8 +257,6 @@ fn test_chroma_subsampling_modes_differ() {
             row_bytes,
             row_bytes,
             BitDepth::U8,
-            None,
-            None,
             None,
             None,
         );
@@ -272,15 +308,15 @@ fn test_block_sizes_differ() {
     let (input, _) = create_test_image(w, h);
     let row_bytes = (w * 4) as usize;
 
-    // Test different block sizes (max is 64)
-    let block_sizes = [8u32, 16, 32, 64];
+    // Test different block sizes (effect visible for sizes <= 16)
+    let block_sizes = [8u32, 10, 12, 16];
     let mut outputs: Vec<Vec<u8>> = Vec::new();
 
     for &block_size in &block_sizes {
         let mut output = vec![0u8; input.len()];
         let mut params = DctPushConstants {
             block_size,
-            ..Default::default()
+            ..DctPushConstants::new()
         };
         params.set_quality(50.0);
 
@@ -295,8 +331,6 @@ fn test_block_sizes_differ() {
             row_bytes,
             row_bytes,
             BitDepth::U8,
-            None,
-            None,
             None,
             None,
         );

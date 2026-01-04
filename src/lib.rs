@@ -104,7 +104,7 @@ impl AdobePluginInstance for LocalMutex {
                         .set_return_msg(&format!("Jpegasus: {gpu_error}"));
                     return Err(ae::Error::Generic);
                 }
-                render::render(plugin, &mut self.lock().unwrap(), &extra)?;
+                render::render(plugin, self.get_mut().unwrap(), &extra)?;
                 if let Some(gpu_error) = take_gpu_error() {
                     plugin
                         .out_data

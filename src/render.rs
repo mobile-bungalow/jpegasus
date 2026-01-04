@@ -1,5 +1,5 @@
 use crate::param_util::INPUT_LAYER_CHECKOUT_ID;
-use crate::pipeline::DctPushConstants;
+use crate::pipeline::{DctPushConstants, Layer};
 use crate::types::*;
 
 use ae::*;
@@ -43,20 +43,18 @@ pub fn render(
         return Ok(());
     };
     let output_row_bytes = out_layer.row_bytes().unsigned_abs();
-
     let bit_depth = BitDepth::from(extra.bit_depth());
 
-    // Get row_bytes for each matte layer (they may differ from input)
-    let error_matte_row_bytes = error_matte_layer
-        .as_ref()
-        .map(|l| l.row_bytes().unsigned_abs());
-    let luma_quality_row_bytes = luma_quality_layer
-        .as_ref()
-        .map(|l| l.row_bytes().unsigned_abs());
+    let error_matte = error_matte_layer.as_ref().map(|l| Layer {
+        buffer: l.buffer(),
+        row_bytes: l.row_bytes().unsigned_abs(),
+    });
+    let luma_quality = luma_quality_layer.as_ref().map(|l| Layer {
+        buffer: l.buffer(),
+        row_bytes: l.row_bytes().unsigned_abs(),
+    });
 
-    // Get thread-local pipeline (lazily initialized)
     let pipeline = local.pipeline(&global.device);
-
     pipeline.render(
         &global.device,
         &global.queue,
@@ -68,198 +66,60 @@ pub fn render(
         input_row_bytes,
         output_row_bytes,
         bit_depth,
-        error_matte_layer.as_ref().map(|l| l.buffer()),
-        error_matte_row_bytes,
-        luma_quality_layer.as_ref().map(|l| l.buffer()),
-        luma_quality_row_bytes,
+        error_matte,
+        luma_quality,
     );
 
     Ok(())
 }
 
+macro_rules! checkout {
+    ($in_data:expr, $time:expr, $idx:expr, float) => {
+        ParamDef::checkout($in_data, $idx.idx(), $time.0, $time.1, $time.2, None)?
+            .as_float_slider()?
+            .value() as f32
+    };
+    ($in_data:expr, $time:expr, $idx:expr, int) => {
+        ParamDef::checkout($in_data, $idx.idx(), $time.0, $time.1, $time.2, None)?
+            .as_slider()?
+            .value() as u32
+    };
+    ($in_data:expr, $time:expr, $idx:expr, popup) => {
+        ParamDef::checkout($in_data, $idx.idx(), $time.0, $time.1, $time.2, None)?
+            .as_popup()?
+            .value() as u32
+            - 1
+    };
+}
+
 fn load_parameters(state: &super::PluginState) -> Result<DctPushConstants, after_effects::Error> {
     let in_data = state.in_data;
-    let current_time = in_data.current_time();
-    let time_step = in_data.time_step();
-    let time_scale = in_data.time_scale();
+    let time = (
+        in_data.current_time(),
+        in_data.time_step(),
+        in_data.time_scale(),
+    );
 
-    // Quality
-    let quality = ParamDef::checkout(
-        in_data,
-        ParamIdx::Quality.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_float_slider()?
-    .value() as f32;
-
-    // Block Size
-    let block_size = ParamDef::checkout(
-        in_data,
-        ParamIdx::BlockSize.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_slider()?
-    .value() as u32;
-
-    // Coefficient Threshold
-    let coefficient_threshold = ParamDef::checkout(
-        in_data,
-        ParamIdx::CoefficientThreshold.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_float_slider()?
-    .value() as f32;
-
-    // Blend Original
-    let blend_original = ParamDef::checkout(
-        in_data,
-        ParamIdx::BlendOriginal.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_float_slider()?
-    .value() as f32;
-
-    // Error Rate
-    let error_rate = ParamDef::checkout(
-        in_data,
-        ParamIdx::ErrorRate.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_float_slider()?
-    .value() as f32;
-
-    // Error Brightness Min
-    let error_brightness_min = ParamDef::checkout(
-        in_data,
-        ParamIdx::ErrorBrightnessMin.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_float_slider()?
-    .value() as f32;
-
-    // Error Brightness Max
-    let error_brightness_max = ParamDef::checkout(
-        in_data,
-        ParamIdx::ErrorBrightnessMax.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_float_slider()?
-    .value() as f32;
-
-    // Error Blue Yellow Min
-    let error_blue_yellow_min = ParamDef::checkout(
-        in_data,
-        ParamIdx::ErrorBlueYellowMin.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_float_slider()?
-    .value() as f32;
-
-    // Error Blue Yellow Max
-    let error_blue_yellow_max = ParamDef::checkout(
-        in_data,
-        ParamIdx::ErrorBlueYellowMax.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_float_slider()?
-    .value() as f32;
-
-    // Error Red Cyan Min
-    let error_red_cyan_min = ParamDef::checkout(
-        in_data,
-        ParamIdx::ErrorRedCyanMin.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_float_slider()?
-    .value() as f32;
-
-    // Error Red Cyan Max
-    let error_red_cyan_max = ParamDef::checkout(
-        in_data,
-        ParamIdx::ErrorRedCyanMax.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_float_slider()?
-    .value() as f32;
-
-    // Seed
-    let seed = ParamDef::checkout(
-        in_data,
-        ParamIdx::Seed.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_slider()?
-    .value() as u32;
-
-    // Error Matte Mode
-    let error_matte_mode = ParamDef::checkout(
-        in_data,
-        ParamIdx::ErrorMatteMode.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_popup()?
-    .value() as u32
-        - 1; // AE popups are 1-indexed
-
-    // Chroma Subsampling
-    let chroma_subsampling = ParamDef::checkout(
-        in_data,
-        ParamIdx::ChromaSubsampling.idx(),
-        current_time,
-        time_step,
-        time_scale,
-        None,
-    )?
-    .as_popup()?
-    .value() as u32
-        - 1; // AE popups are 1-indexed
+    let quality = checkout!(in_data, time, ParamIdx::Quality, float);
+    let block_size = checkout!(in_data, time, ParamIdx::BlockSize, int);
+    let coefficient_min = checkout!(in_data, time, ParamIdx::CoefficientMin, float);
+    let coefficient_max = checkout!(in_data, time, ParamIdx::CoefficientMax, float);
+    let blend_original = checkout!(in_data, time, ParamIdx::BlendOriginal, float);
+    let error_rate = checkout!(in_data, time, ParamIdx::ErrorRate, float);
+    let error_brightness_min = checkout!(in_data, time, ParamIdx::ErrorBrightnessMin, float);
+    let error_brightness_max = checkout!(in_data, time, ParamIdx::ErrorBrightnessMax, float);
+    let error_blue_yellow_min = checkout!(in_data, time, ParamIdx::ErrorBlueYellowMin, float);
+    let error_blue_yellow_max = checkout!(in_data, time, ParamIdx::ErrorBlueYellowMax, float);
+    let error_red_cyan_min = checkout!(in_data, time, ParamIdx::ErrorRedCyanMin, float);
+    let error_red_cyan_max = checkout!(in_data, time, ParamIdx::ErrorRedCyanMax, float);
+    let seed = checkout!(in_data, time, ParamIdx::Seed, int);
+    let error_matte_mode = checkout!(in_data, time, ParamIdx::ErrorMatteMode, popup);
+    let chroma_subsampling = checkout!(in_data, time, ParamIdx::ChromaSubsampling, popup);
 
     let mut params = DctPushConstants {
-        width: 0,
-        height: 0,
-        pass_index: 0,
         block_size,
-        quantization_step: 0.0,
-        coefficient_threshold,
+        coefficient_min,
+        coefficient_max,
         blend_original,
         error_rate,
         error_brightness_min,
@@ -270,10 +130,9 @@ fn load_parameters(state: &super::PluginState) -> Result<DctPushConstants, after
         error_red_cyan_max,
         seed,
         error_matte_mode,
-        use_error_matte: 0,
-        use_luma_quality: 0,
-        ae_channel_order: 1,
         chroma_subsampling,
+        ae_channel_order: 1,
+        ..DctPushConstants::new()
     };
     params.set_quality(quality);
     Ok(params)

@@ -3,18 +3,22 @@ use std::sync::{Mutex, OnceLock};
 use strum::{EnumCount, EnumIter, FromRepr};
 use wgpu::{Device, Queue};
 
+#[allow(dead_code)]
 static FATAL_GPU_ERROR: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
+#[allow(dead_code)]
 fn error_store() -> &'static Mutex<Option<String>> {
     FATAL_GPU_ERROR.get_or_init(|| Mutex::new(None))
 }
 
+#[allow(dead_code)]
 pub fn set_gpu_error(error: String) {
     if let Ok(mut guard) = error_store().lock() {
         *guard = Some(error);
     }
 }
 
+#[allow(dead_code)]
 pub fn take_gpu_error() -> Option<String> {
     error_store().lock().ok().and_then(|mut g| g.take())
 }
@@ -25,7 +29,8 @@ pub fn take_gpu_error() -> Option<String> {
 pub enum ParamIdx {
     Quality = 1,
     BlockSize,
-    CoefficientThreshold,
+    CoefficientMin,
+    CoefficientMax,
     BlendOriginal,
     ErrorGroupStart,
     ErrorRate,
@@ -116,28 +121,33 @@ impl From<wgpu::TextureFormat> for BitDepth {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct InnerGlobal {
     pub device: Device,
     pub queue: Queue,
 }
 
+#[allow(dead_code)]
 pub type JpegasusGlobal = std::sync::OnceLock<InnerGlobal>;
 
+#[allow(dead_code)]
 pub type LocalMutex = Mutex<Local>;
 
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct Local {
     pub pipeline: Option<DctPipeline>,
 }
 
+#[allow(dead_code)]
 impl Local {
-    /// Get or initialize the pipeline, using the provided device
     pub fn pipeline(&mut self, device: &Device) -> &mut DctPipeline {
         self.pipeline
             .get_or_insert_with(|| DctPipeline::new(device))
     }
 }
 
+#[allow(dead_code)]
 pub fn init_global() -> Option<InnerGlobal> {
     let instance_desc = wgpu::InstanceDescriptor {
         #[cfg(target_os = "windows")]

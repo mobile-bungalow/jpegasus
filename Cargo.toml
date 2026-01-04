@@ -12,7 +12,6 @@ after-effects-sys = "0.2.1"
 env_logger = "0.11.3"
 wgpu = "23"
 bytemuck = { version = "1.14", features = ["derive"] }
-encase = "0.10"
 half = "2.4"
 log = "0.4"
 strum = { version = "0.26", features = ["derive"] }
