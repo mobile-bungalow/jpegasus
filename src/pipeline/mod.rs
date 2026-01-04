@@ -17,23 +17,10 @@ pub struct DctPushConstants {
     pub coefficient_min: f32,
     pub coefficient_max: f32,
     pub blend_original: f32,
-    pub error_rate: f32,
-    pub error_brightness_min: f32,
-    pub error_brightness_max: f32,
-    pub error_blue_yellow_min: f32,
-    pub error_blue_yellow_max: f32,
-    pub error_red_cyan_min: f32,
-    pub error_red_cyan_max: f32,
-    pub seed: u32,
-    pub error_matte_mode: u32,
-    pub use_error_matte: u32,
     pub use_luma_quality: u32,
     pub ae_channel_order: u32,
     pub chroma_subsampling: u32,
 }
-
-const _: () = assert!(std::mem::size_of::<DctPushConstants>() == 84);
-const _: () = assert!(std::mem::align_of::<DctPushConstants>() == 4);
 
 impl DctPushConstants {
     pub fn new() -> Self {

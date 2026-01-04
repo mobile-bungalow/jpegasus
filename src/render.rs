@@ -26,17 +26,12 @@ pub fn render(
     let height = input_layer.height() as u32;
     let input_row_bytes = input_layer.row_bytes().unsigned_abs();
 
-    let error_matte_layer = cb
-        .checkout_layer_pixels(ParamIdx::ErrorMatte.idx() as u32)
-        .ok()
-        .flatten();
     let luma_quality_layer = cb
         .checkout_layer_pixels(ParamIdx::LumaQualityMatte.idx() as u32)
         .ok()
         .flatten();
 
     let mut push_constants = params;
-    push_constants.use_error_matte = if error_matte_layer.is_some() { 1 } else { 0 };
     push_constants.use_luma_quality = if luma_quality_layer.is_some() { 1 } else { 0 };
 
     let Some(mut out_layer) = cb.checkout_output()? else {
@@ -45,10 +40,6 @@ pub fn render(
     let output_row_bytes = out_layer.row_bytes().unsigned_abs();
     let bit_depth = BitDepth::from(extra.bit_depth());
 
-    let error_matte = error_matte_layer.as_ref().map(|l| Layer {
-        buffer: l.buffer(),
-        row_bytes: l.row_bytes().unsigned_abs(),
-    });
     let luma_quality = luma_quality_layer.as_ref().map(|l| Layer {
         buffer: l.buffer(),
         row_bytes: l.row_bytes().unsigned_abs(),
@@ -66,7 +57,7 @@ pub fn render(
         input_row_bytes,
         output_row_bytes,
         bit_depth,
-        error_matte,
+        None,
         luma_quality,
     );
 
@@ -105,15 +96,6 @@ fn load_parameters(state: &super::PluginState) -> Result<DctPushConstants, after
     let coefficient_min = checkout!(in_data, time, ParamIdx::CoefficientMin, float);
     let coefficient_max = checkout!(in_data, time, ParamIdx::CoefficientMax, float);
     let blend_original = checkout!(in_data, time, ParamIdx::BlendOriginal, float);
-    let error_rate = checkout!(in_data, time, ParamIdx::ErrorRate, float);
-    let error_brightness_min = checkout!(in_data, time, ParamIdx::ErrorBrightnessMin, float);
-    let error_brightness_max = checkout!(in_data, time, ParamIdx::ErrorBrightnessMax, float);
-    let error_blue_yellow_min = checkout!(in_data, time, ParamIdx::ErrorBlueYellowMin, float);
-    let error_blue_yellow_max = checkout!(in_data, time, ParamIdx::ErrorBlueYellowMax, float);
-    let error_red_cyan_min = checkout!(in_data, time, ParamIdx::ErrorRedCyanMin, float);
-    let error_red_cyan_max = checkout!(in_data, time, ParamIdx::ErrorRedCyanMax, float);
-    let seed = checkout!(in_data, time, ParamIdx::Seed, int);
-    let error_matte_mode = checkout!(in_data, time, ParamIdx::ErrorMatteMode, popup);
     let chroma_subsampling = checkout!(in_data, time, ParamIdx::ChromaSubsampling, popup);
 
     let mut params = DctPushConstants {
@@ -121,15 +103,6 @@ fn load_parameters(state: &super::PluginState) -> Result<DctPushConstants, after
         coefficient_min,
         coefficient_max,
         blend_original,
-        error_rate,
-        error_brightness_min,
-        error_brightness_max,
-        error_blue_yellow_min,
-        error_blue_yellow_max,
-        error_red_cyan_min,
-        error_red_cyan_max,
-        seed,
-        error_matte_mode,
         chroma_subsampling,
         ae_channel_order: 1,
         ..DctPushConstants::new()

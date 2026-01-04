@@ -75,15 +75,6 @@ impl AdobePluginInstance for LocalMutex {
 
                     // Now checkout matte layers with the same rect
                     let _ = cb.checkout_layer(
-                        ParamIdx::ErrorMatte.idx(),
-                        ParamIdx::ErrorMatte.idx(),
-                        &req,
-                        current_time,
-                        time_step,
-                        time_scale,
-                    );
-
-                    let _ = cb.checkout_layer(
                         ParamIdx::LumaQualityMatte.idx(),
                         ParamIdx::LumaQualityMatte.idx(),
                         &req,

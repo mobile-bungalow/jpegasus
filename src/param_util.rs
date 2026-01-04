@@ -37,8 +37,8 @@ pub fn setup_params(params: &mut ae::Parameters<ParamIdx>) -> Result<(), Error> 
             f.set_valid_min(0.0);
             f.set_valid_max(1.0);
             f.set_slider_min(0.0);
-            f.set_slider_max(1.0);
-            f.set_precision(2);
+            f.set_slider_max(0.5);
+            f.set_precision(3);
         }),
     )?;
 
@@ -50,8 +50,8 @@ pub fn setup_params(params: &mut ae::Parameters<ParamIdx>) -> Result<(), Error> 
             f.set_valid_min(0.0);
             f.set_valid_max(1.0);
             f.set_slider_min(0.0);
-            f.set_slider_max(1.0);
-            f.set_precision(2);
+            f.set_slider_max(0.5);
+            f.set_precision(3);
         }),
     )?;
 
@@ -66,130 +66,6 @@ pub fn setup_params(params: &mut ae::Parameters<ParamIdx>) -> Result<(), Error> 
             f.set_slider_max(1.0);
             f.set_precision(2);
         }),
-    )?;
-
-    params.add_group(
-        ParamIdx::ErrorGroupStart,
-        ParamIdx::ErrorGroupEnd,
-        "Error",
-        true,
-        |params| {
-            params.add(
-                ParamIdx::ErrorRate,
-                "Rate",
-                ae::FloatSliderDef::setup(|f| {
-                    f.set_default(0.0);
-                    f.set_valid_min(0.0);
-                    f.set_valid_max(100.0);
-                    f.set_slider_min(0.0);
-                    f.set_slider_max(100.0);
-                    f.set_precision(1);
-                }),
-            )?;
-
-            params.add(
-                ParamIdx::ErrorBrightnessMin,
-                "Brightness Min",
-                ae::FloatSliderDef::setup(|f| {
-                    f.set_default(0.0);
-                    f.set_valid_min(-1.0);
-                    f.set_valid_max(1.0);
-                    f.set_slider_min(-1.0);
-                    f.set_slider_max(1.0);
-                    f.set_precision(2);
-                }),
-            )?;
-
-            params.add(
-                ParamIdx::ErrorBrightnessMax,
-                "Brightness Max",
-                ae::FloatSliderDef::setup(|f| {
-                    f.set_default(0.0);
-                    f.set_valid_min(-1.0);
-                    f.set_valid_max(1.0);
-                    f.set_slider_min(-1.0);
-                    f.set_slider_max(1.0);
-                    f.set_precision(2);
-                }),
-            )?;
-
-            params.add(
-                ParamIdx::ErrorBlueYellowMin,
-                "Blue Yellow Min",
-                ae::FloatSliderDef::setup(|f| {
-                    f.set_default(0.0);
-                    f.set_valid_min(-1.0);
-                    f.set_valid_max(1.0);
-                    f.set_slider_min(-1.0);
-                    f.set_slider_max(1.0);
-                    f.set_precision(2);
-                }),
-            )?;
-
-            params.add(
-                ParamIdx::ErrorBlueYellowMax,
-                "Blue Yellow Max",
-                ae::FloatSliderDef::setup(|f| {
-                    f.set_default(0.0);
-                    f.set_valid_min(-1.0);
-                    f.set_valid_max(1.0);
-                    f.set_slider_min(-1.0);
-                    f.set_slider_max(1.0);
-                    f.set_precision(2);
-                }),
-            )?;
-
-            params.add(
-                ParamIdx::ErrorRedCyanMin,
-                "Red Cyan Min",
-                ae::FloatSliderDef::setup(|f| {
-                    f.set_default(0.0);
-                    f.set_valid_min(-1.0);
-                    f.set_valid_max(1.0);
-                    f.set_slider_min(-1.0);
-                    f.set_slider_max(1.0);
-                    f.set_precision(2);
-                }),
-            )?;
-
-            params.add(
-                ParamIdx::ErrorRedCyanMax,
-                "Red Cyan Max",
-                ae::FloatSliderDef::setup(|f| {
-                    f.set_default(0.0);
-                    f.set_valid_min(-1.0);
-                    f.set_valid_max(1.0);
-                    f.set_slider_min(-1.0);
-                    f.set_slider_max(1.0);
-                    f.set_precision(2);
-                }),
-            )?;
-
-            params.add(
-                ParamIdx::Seed,
-                "Seed",
-                ae::SliderDef::setup(|f| {
-                    f.set_default(0);
-                    f.set_valid_min(0);
-                    f.set_valid_max(10000);
-                    f.set_slider_min(0);
-                    f.set_slider_max(10000);
-                }),
-            )?;
-
-            params.add(
-                ParamIdx::ErrorMatteMode,
-                "Matte Mode",
-                ae::PopupDef::setup(|f| {
-                    f.set_options(&["Luminance", "RGB Drive YCbCr"]);
-                    f.set_default(1);
-                }),
-            )?;
-
-            params.add(ParamIdx::ErrorMatte, "Matte", ae::LayerDef::setup(|_| {}))?;
-
-            Ok(())
-        },
     )?;
 
     params.add(

@@ -61,50 +61,6 @@ fn test_dct_roundtrip() {
 }
 
 #[test]
-fn test_error_injection() {
-    let (device, queue) = gpu();
-    let mut pipeline = DctPipeline::new(&device);
-
-    let img = image::open("tests/fixtures/input.png").unwrap().to_rgba8();
-    let (w, h) = img.dimensions();
-    let input: Vec<u8> = img.into_raw();
-    let mut output = vec![0u8; input.len()];
-
-    let row_bytes = (w * 4) as usize;
-    let mut params = DctPushConstants {
-        block_size: 8,
-        error_rate: 50.0,
-        error_brightness_min: -0.5,
-        error_brightness_max: 0.5,
-        error_blue_yellow_min: -0.5,
-        error_blue_yellow_max: 0.5,
-        error_red_cyan_min: -0.5,
-        error_red_cyan_max: 0.5,
-        seed: 42,
-        ..DctPushConstants::new()
-    };
-    params.set_quality(50.0);
-    pipeline.render(
-        &device,
-        &queue,
-        params,
-        &input,
-        &mut output,
-        w,
-        h,
-        row_bytes,
-        row_bytes,
-        BitDepth::U8,
-        None,
-        None,
-    );
-
-    let out_img = image::RgbaImage::from_raw(w, h, output).unwrap();
-    out_img.save("tests/fixtures/output_errors.png").unwrap();
-    println!("Saved tests/fixtures/output_errors.png - check for block-based errors");
-}
-
-#[test]
 fn bench_render() {
     let (device, queue) = gpu();
     let mut pipeline = DctPipeline::new(&device);

@@ -10,16 +10,6 @@ struct Params {
     coefficient_min: f32,
     coefficient_max: f32,
     blend_original: f32,
-    error_rate: f32,
-    error_brightness_min: f32,
-    error_brightness_max: f32,
-    error_blue_yellow_min: f32,
-    error_blue_yellow_max: f32,
-    error_red_cyan_min: f32,
-    error_red_cyan_max: f32,
-    seed: u32,
-    error_matte_mode: u32,
-    use_error_matte: u32,
     use_luma_quality: u32,
     ae_channel_order: u32,
     chroma_subsampling: u32,
@@ -30,16 +20,9 @@ var<push_constant> params: Params;
 @group(0) @binding(0) var input_tex: texture_2d<f32>;
 @group(0) @binding(1) var output_tex: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(2) var coef_tex: texture_2d<f32>;
-@group(0) @binding(3) var error_matte_tex: texture_2d<f32>;
+@group(0) @binding(3) var _unused_tex: texture_2d<f32>;
 @group(0) @binding(4) var quality_matte_tex: texture_2d<f32>;
 @group(0) @binding(5) var output_tex_8bit: texture_storage_2d<rgba8unorm, write>;
-
-// Hash for pseudo-random error injection
-fn hash(p: vec2<f32>, s: i32) -> f32 {
-    var h = fract(vec3<f32>(p.xyx + f32(s)) * 0.1031);
-    h += dot(h, h.yzx + 33.33);
-    return fract((h.x + h.y) * h.z);
-}
 
 // DCT basis function: cos((2n+1)k*pi/2N)
 fn dct_basis(n: u32, k: u32, block_size: f32) -> f32 {
@@ -218,28 +201,6 @@ fn pass_quantize(@builtin(global_invocation_id) gid: vec3<u32>) {
     if zero_chroma {
         coef.y = 0.0;
         coef.z = 0.0;
-    }
-
-    // Error injection into coefficients
-    var error_strength = 0.0;
-    if params.use_error_matte == 0u {
-        let block_hash = hash(vec2<f32>(f32(origin.x), f32(origin.y)), i32(params.seed));
-        if block_hash * 100.0 < params.error_rate {
-            error_strength = 1.0;
-        }
-    } else {
-        let em = load_pixel(error_matte_tex, px);
-        error_strength = 0.299 * em.r + 0.587 * em.g + 0.114 * em.b;
-    }
-
-    if error_strength > 0.0 && local.x == 0u && local.y == 0u {
-        let block_pos = vec2<f32>(f32(origin.x), f32(origin.y));
-        let err_y = mix(params.error_brightness_min, params.error_brightness_max, hash(block_pos, i32(params.seed) + 1));
-        let err_cb = mix(params.error_blue_yellow_min, params.error_blue_yellow_max, hash(block_pos, i32(params.seed) + 2));
-        let err_cr = mix(params.error_red_cyan_min, params.error_red_cyan_max, hash(block_pos, i32(params.seed) + 3));
-        coef.x += err_y * error_strength;
-        coef.y += err_cb * error_strength;
-        coef.z += err_cr * error_strength;
     }
 
     textureStore(output_tex, px, coef);
