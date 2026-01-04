@@ -5,7 +5,7 @@ mod pipeline {
     include!("../src/pipeline/mod.rs");
 }
 
-use pipeline::{DctPipeline, DctPushConstants};
+use pipeline::{DctPipeline, DctPushConstants, Layer, LayerMut};
 use std::time::Instant;
 use types::BitDepth;
 
@@ -16,7 +16,8 @@ fn gpu() -> (wgpu::Device, wgpu::Queue) {
     limits.max_push_constant_size = 256;
     pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
-            required_features: wgpu::Features::PUSH_CONSTANTS,
+            required_features: wgpu::Features::PUSH_CONSTANTS
+                | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM,
             required_limits: limits,
             ..Default::default()
         },
@@ -45,14 +46,17 @@ fn test_dct_roundtrip() {
         &device,
         &queue,
         params,
-        &input,
-        &mut output,
-        w,
-        h,
-        row_bytes,
-        row_bytes,
-        BitDepth::U8,
-        None,
+        Layer {
+            buffer: &input,
+            row_bytes,
+            width: w,
+            height: h,
+            bit_depth: BitDepth::U8,
+        },
+        LayerMut {
+            buffer: &mut output,
+            row_bytes,
+        },
         None,
     );
 
@@ -85,14 +89,15 @@ fn bench_render() {
             &device,
             &queue,
             params,
-            &input,
+            Layer {
+                buffer: &input,
+                row_bytes,
+                width: w,
+                height: h,
+                bit_depth: BitDepth::U8,
+            },
             &mut output,
-            w,
-            h,
             row_bytes,
-            row_bytes,
-            BitDepth::U8,
-            None,
             None,
         );
 
@@ -103,14 +108,15 @@ fn bench_render() {
                 &device,
                 &queue,
                 params,
-                &input,
+                Layer {
+                    buffer: &input,
+                    row_bytes,
+                    width: w,
+                    height: h,
+                    bit_depth: BitDepth::U8,
+                },
                 &mut output,
-                w,
-                h,
                 row_bytes,
-                row_bytes,
-                BitDepth::U8,
-                None,
                 None,
             );
         }
@@ -122,6 +128,123 @@ fn bench_render() {
     }
 
     println!("=====================================\n");
+}
+
+#[test]
+fn bench_bit_depths() {
+    let (device, queue) = gpu();
+    let mut pipeline = DctPipeline::new(&device);
+
+    let w = 1920u32;
+    let h = 1080u32;
+
+    println!("\n=== Bit Depth Benchmark (1920x1080) ===");
+
+    // U8: 4 bytes per pixel
+    {
+        let input: Vec<u8> = (0..(w * h * 4)).map(|i| (i % 256) as u8).collect();
+        let mut output = vec![0u8; input.len()];
+        let row_bytes = (w * 4) as usize;
+
+        let mut params = DctPushConstants {
+            block_size: 8,
+            ..DctPushConstants::new()
+        };
+        params.set_quality(50.0);
+
+        // Warmup
+        pipeline.render(
+            &device,
+            &queue,
+            params,
+            Layer {
+                buffer: &input,
+                row_bytes,
+                width: w,
+                height: h,
+                bit_depth: BitDepth::U8,
+            },
+            &mut output,
+            row_bytes,
+            None,
+        );
+
+        let iterations = 10;
+        let start = std::time::Instant::now();
+        for _ in 0..iterations {
+            pipeline.render(
+                &device,
+                &queue,
+                params,
+                Layer {
+                    buffer: &input,
+                    row_bytes,
+                    width: w,
+                    height: h,
+                    bit_depth: BitDepth::U8,
+                },
+                &mut output,
+                row_bytes,
+                None,
+            );
+        }
+        let avg_ms = start.elapsed().as_millis() as f64 / iterations as f64;
+        println!("U8:  {avg_ms:.1}ms ({:.1} FPS)", 1000.0 / avg_ms);
+    }
+
+    // U16: 8 bytes per pixel (AE 16-bit)
+    {
+        let input: Vec<u8> = (0..(w * h * 8)).map(|i| (i % 256) as u8).collect();
+        let mut output = vec![0u8; input.len()];
+        let row_bytes = (w * 8) as usize;
+
+        let mut params = DctPushConstants {
+            block_size: 8,
+            ..DctPushConstants::new()
+        };
+        params.set_quality(50.0);
+
+        // Warmup
+        pipeline.render(
+            &device,
+            &queue,
+            params,
+            Layer {
+                buffer: &input,
+                row_bytes,
+                width: w,
+                height: h,
+                bit_depth: BitDepth::U16,
+            },
+            &mut output,
+            row_bytes,
+            None,
+        );
+
+        let iterations = 10;
+        let start = std::time::Instant::now();
+        for _ in 0..iterations {
+            pipeline.render(
+                &device,
+                &queue,
+                params,
+                Layer {
+                    buffer: &input,
+                    row_bytes,
+                    width: w,
+                    height: h,
+                    bit_depth: BitDepth::U16,
+                },
+                &mut output,
+                row_bytes,
+                None,
+            );
+        }
+        let avg_ms = start.elapsed().as_millis() as f64 / iterations as f64;
+        println!("U16: {avg_ms:.1}ms ({:.1} FPS)", 1000.0 / avg_ms);
+    }
+
+    println!("=======================================\n");
 }
 
 #[test]
@@ -206,14 +329,15 @@ fn test_chroma_subsampling_modes_differ() {
             &device,
             &queue,
             params,
-            &input,
+            Layer {
+                buffer: &input,
+                row_bytes,
+                width: w,
+                height: h,
+                bit_depth: BitDepth::U8,
+            },
             &mut output,
-            w,
-            h,
             row_bytes,
-            row_bytes,
-            BitDepth::U8,
-            None,
             None,
         );
 
@@ -280,14 +404,15 @@ fn test_block_sizes_differ() {
             &device,
             &queue,
             params,
-            &input,
+            Layer {
+                buffer: &input,
+                row_bytes,
+                width: w,
+                height: h,
+                bit_depth: BitDepth::U8,
+            },
             &mut output,
-            w,
-            h,
             row_bytes,
-            row_bytes,
-            BitDepth::U8,
-            None,
             None,
         );
 

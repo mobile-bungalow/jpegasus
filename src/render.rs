@@ -1,5 +1,5 @@
 use crate::param_util::INPUT_LAYER_CHECKOUT_ID;
-use crate::pipeline::{DctPushConstants, Layer};
+use crate::pipeline::{DctPushConstants, Layer, LayerMut};
 use crate::types::*;
 
 use ae::*;
@@ -40,24 +40,34 @@ pub fn render(
     let output_row_bytes = out_layer.row_bytes().unsigned_abs();
     let bit_depth = BitDepth::from(extra.bit_depth());
 
+    let input = Layer {
+        buffer: input_layer.buffer(),
+        row_bytes: input_row_bytes,
+        width,
+        height,
+        bit_depth,
+    };
+
     let luma_quality = luma_quality_layer.as_ref().map(|l| Layer {
         buffer: l.buffer(),
         row_bytes: l.row_bytes().unsigned_abs(),
+        width,
+        height,
+        bit_depth,
     });
 
     let pipeline = local.pipeline(&global.device);
+    let output = LayerMut {
+        buffer: out_layer.buffer_mut(),
+        row_bytes: output_row_bytes,
+    };
+
     pipeline.render(
         &global.device,
         &global.queue,
         push_constants,
-        input_layer.buffer(),
-        out_layer.buffer_mut(),
-        width,
-        height,
-        input_row_bytes,
-        output_row_bytes,
-        bit_depth,
-        None,
+        input,
+        output,
         luma_quality,
     );
 

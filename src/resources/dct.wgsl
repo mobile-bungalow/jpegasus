@@ -23,6 +23,7 @@ var<push_constant> params: Params;
 @group(0) @binding(3) var _unused_tex: texture_2d<f32>;
 @group(0) @binding(4) var quality_matte_tex: texture_2d<f32>;
 @group(0) @binding(5) var output_tex_8bit: texture_storage_2d<rgba8unorm, write>;
+@group(0) @binding(6) var output_tex_16bit: texture_storage_2d<rgba16unorm, write>;
 
 // DCT basis function: cos((2n+1)k*pi/2N)
 fn dct_basis(n: u32, k: u32, block_size: f32) -> f32 {
@@ -78,6 +79,13 @@ fn store_pixel_8bit(px: vec2<i32>, c: vec4<f32>) {
     var out = c;
     if params.ae_channel_order == 1u { out = out.argb; }
     textureStore(output_tex_8bit, px, out);
+}
+
+// Store pixel with AE channel order correction (16-bit)
+fn store_pixel_16bit(px: vec2<i32>, c: vec4<f32>) {
+    var out = c;
+    if params.ae_channel_order == 1u { out = out.argb; }
+    textureStore(output_tex_16bit, px, out);
 }
 
 // Get block-local coordinates
@@ -272,4 +280,11 @@ fn pass_finalize_8bit(@builtin(global_invocation_id) gid: vec3<u32>) {
     let px = vec2<i32>(i32(gid.x), i32(gid.y));
     if px.x >= i32(params.width) || px.y >= i32(params.height) { return; }
     store_pixel_8bit(px, finalize(px));
+}
+
+@compute @workgroup_size(8, 8)
+fn pass_finalize_16bit(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let px = vec2<i32>(i32(gid.x), i32(gid.y));
+    if px.x >= i32(params.width) || px.y >= i32(params.height) { return; }
+    store_pixel_16bit(px, finalize(px));
 }
