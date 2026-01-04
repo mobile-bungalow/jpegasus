@@ -10,19 +10,28 @@ use std::time::Instant;
 use types::BitDepth;
 
 fn gpu() -> (wgpu::Device, wgpu::Queue) {
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
-    let adapter = pollster::block_on(instance.request_adapter(&Default::default())).unwrap();
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        #[cfg(target_os = "macos")]
+        backends: wgpu::Backends::METAL,
+        #[cfg(target_os = "windows")]
+        backends: wgpu::Backends::VULKAN,
+        ..Default::default()
+    });
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        ..Default::default()
+    }))
+    .ok()
+    .unwrap();
     let mut limits = wgpu::Limits::default();
-    limits.max_push_constant_size = 256;
-    pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            required_features: wgpu::Features::PUSH_CONSTANTS
-                | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM,
-            required_limits: limits,
-            ..Default::default()
-        },
-        None,
-    ))
+    limits.max_immediate_size = 256;
+    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
+            | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+            | wgpu::Features::IMMEDIATES,
+        required_limits: limits,
+        ..Default::default()
+    }))
     .unwrap()
 }
 
@@ -96,8 +105,10 @@ fn bench_render() {
                 height: h,
                 bit_depth: BitDepth::U8,
             },
-            &mut output,
-            row_bytes,
+            LayerMut {
+                buffer: &mut output,
+                row_bytes,
+            },
             None,
         );
 
@@ -115,8 +126,10 @@ fn bench_render() {
                     height: h,
                     bit_depth: BitDepth::U8,
                 },
-                &mut output,
-                row_bytes,
+                LayerMut {
+                    buffer: &mut output,
+                    row_bytes,
+                },
                 None,
             );
         }
@@ -164,8 +177,10 @@ fn bench_bit_depths() {
                 height: h,
                 bit_depth: BitDepth::U8,
             },
-            &mut output,
-            row_bytes,
+            LayerMut {
+                buffer: &mut output,
+                row_bytes,
+            },
             None,
         );
 
@@ -183,8 +198,10 @@ fn bench_bit_depths() {
                     height: h,
                     bit_depth: BitDepth::U8,
                 },
-                &mut output,
-                row_bytes,
+                LayerMut {
+                    buffer: &mut output,
+                    row_bytes,
+                },
                 None,
             );
         }
@@ -216,8 +233,10 @@ fn bench_bit_depths() {
                 height: h,
                 bit_depth: BitDepth::U16,
             },
-            &mut output,
-            row_bytes,
+            LayerMut {
+                buffer: &mut output,
+                row_bytes,
+            },
             None,
         );
 
@@ -235,8 +254,10 @@ fn bench_bit_depths() {
                     height: h,
                     bit_depth: BitDepth::U16,
                 },
-                &mut output,
-                row_bytes,
+                LayerMut {
+                    buffer: &mut output,
+                    row_bytes,
+                },
                 None,
             );
         }
@@ -336,8 +357,10 @@ fn test_chroma_subsampling_modes_differ() {
                 height: h,
                 bit_depth: BitDepth::U8,
             },
-            &mut output,
-            row_bytes,
+            LayerMut {
+                buffer: &mut output,
+                row_bytes,
+            },
             None,
         );
 
@@ -411,8 +434,10 @@ fn test_block_sizes_differ() {
                 height: h,
                 bit_depth: BitDepth::U8,
             },
-            &mut output,
-            row_bytes,
+            LayerMut {
+                buffer: &mut output,
+                row_bytes,
+            },
             None,
         );
 

@@ -10,7 +10,7 @@ crate-type = ["cdylib"]
 after-effects = { git = "https://github.com/virtualritz/after-effects", commit = "9cf784e" }
 after-effects-sys = "0.2.1"
 env_logger = "0.11.3"
-wgpu = "23"
+wgpu = "28"
 bytemuck = { version = "1.14", features = ["derive"] }
 half = "2.4"
 log = "0.4"

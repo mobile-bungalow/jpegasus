@@ -146,39 +146,39 @@ pub fn init_global() -> Option<InnerGlobal> {
         ..Default::default()
     };
 
-    let instance = wgpu::Instance::new(instance_desc);
+    let instance = wgpu::Instance::new(&instance_desc);
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         force_fallback_adapter: false,
         compatible_surface: None,
-    }))?;
+    }))
+    .ok()?;
 
     let adapter_limits = adapter.limits();
     let mut required_limits = wgpu::Limits::default().using_resolution(adapter_limits.clone());
 
-    required_limits.max_push_constant_size = 256;
+    required_limits.max_immediate_size = 256;
     required_limits.max_storage_textures_per_shader_stage = 4;
     required_limits.max_buffer_size = adapter_limits.max_buffer_size;
     required_limits.max_storage_buffer_binding_size =
         adapter_limits.max_storage_buffer_binding_size;
     required_limits.max_texture_dimension_2d = adapter_limits.max_texture_dimension_2d;
 
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: None,
-            required_features: wgpu::Features::PUSH_CONSTANTS
-                | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
-                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                | wgpu::Features::VERTEX_WRITABLE_STORAGE,
-            required_limits,
-            memory_hints: wgpu::MemoryHints::default(),
-        },
-        None,
-    ))
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: None,
+        required_features: wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
+            | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+            | wgpu::Features::VERTEX_WRITABLE_STORAGE
+            | wgpu::Features::IMMEDIATES,
+        required_limits,
+        memory_hints: wgpu::MemoryHints::default(),
+        trace: wgpu::Trace::Off,
+        experimental_features: wgpu::ExperimentalFeatures::default(),
+    }))
     .ok()?;
 
-    device.on_uncaptured_error(Box::new(|e| match e {
+    device.on_uncaptured_error(std::sync::Arc::new(|e| match e {
         wgpu::Error::Internal {
             source,
             description,
