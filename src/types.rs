@@ -147,23 +147,20 @@ pub fn init_global() -> Option<InnerGlobal> {
     .ok()?;
 
     let adapter_limits = adapter.limits();
-    let mut required_limits = wgpu::Limits::default().using_resolution(adapter_limits.clone());
-
-    required_limits.max_immediate_size = 256;
-    required_limits.max_storage_textures_per_shader_stage = 4;
-    required_limits.max_buffer_size = adapter_limits.max_buffer_size;
-    required_limits.max_storage_buffer_binding_size =
-        adapter_limits.max_storage_buffer_binding_size;
-    required_limits.max_texture_dimension_2d = adapter_limits.max_texture_dimension_2d;
+    let required_limits = wgpu::Limits {
+        max_immediate_size: 256,
+        max_storage_textures_per_shader_stage: 4,
+        max_buffer_size: adapter_limits.max_buffer_size,
+        max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
+        max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d,
+        ..wgpu::Limits::default()
+    };
 
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: None,
-        required_features: wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
-            | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-            | wgpu::Features::VERTEX_WRITABLE_STORAGE
-            | wgpu::Features::IMMEDIATES,
+        required_features: wgpu::Features::IMMEDIATES,
         required_limits,
-        memory_hints: wgpu::MemoryHints::default(),
+        memory_hints: wgpu::MemoryHints::Performance,
         trace: wgpu::Trace::Off,
         experimental_features: wgpu::ExperimentalFeatures::default(),
     }))

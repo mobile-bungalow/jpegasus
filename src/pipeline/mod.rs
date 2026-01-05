@@ -296,6 +296,7 @@ impl DctPipeline {
         let bg_to_0 = bind(&cache.input.1, &cache.dct[0].1);
         let bg_0_to_1 = bind(&cache.dct[0].1, &cache.dct[1].1);
         let bg_1_to_0 = bind(&cache.dct[1].1, &cache.dct[0].1);
+        // Ping pong buffer
         let bind_groups = [&bg_to_0, &bg_0_to_1, &bg_1_to_0, &bg_0_to_1, &bg_1_to_0];
 
         for (pipeline, bind_group) in self.pipelines.iter().zip(bind_groups) {
