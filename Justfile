@@ -19,15 +19,15 @@ release:
 
 [macos]
 build:
-    just -f {{ justfile() }} create_bundle debug {{ TargetDir }} 'Developer ID Application' ''
+    just -f {{ justfile() }} create_bundle debug {{ TargetDir }} ''
 
 [macos]
 release:
-    just -f {{ justfile() }} create_bundle release {{ TargetDir }} 'Developer ID Application' --release
+    just -f {{ justfile() }} create_bundle release {{ TargetDir }} --release
     just -f {{ justfile() }} notarize_and_staple release {{ TargetDir }}
 
 [macos]
-create_bundle BuildType TargetDir CertType BuildFlags:
+create_bundle BuildType TargetDir BuildFlags:
     echo "Creating universal plugin bundle"
     rm -Rf {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin
     mkdir -p {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin/Contents/Resources
@@ -48,7 +48,7 @@ create_bundle BuildType TargetDir CertType BuildFlags:
 
     lipo {{ TargetDir }}/{x86_64,aarch64}-apple-darwin/{{ BuildType }}/lib{{ CrateName }}.dylib -create -output {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin/Contents/MacOS/{{ BinaryName }}.dylib
     mv {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin/Contents/MacOS/{{ BinaryName }}.dylib {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin/Contents/MacOS/{{ PluginName }}
-    /usr/bin/codesign --force --options runtime --timestamp -s $( security find-identity -v -p codesigning | grep -m 1 "{{ CertType }}" | awk -F ' ' '{print $2}' ) {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin
+    /usr/bin/codesign --force --options runtime --timestamp -s "${SIGNING_IDENTITY}" {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin
 
 [macos]
 notarize_and_staple BuildType TargetDir:
