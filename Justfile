@@ -48,7 +48,7 @@ create_bundle BuildType TargetDir BuildFlags:
 
     lipo {{ TargetDir }}/{x86_64,aarch64}-apple-darwin/{{ BuildType }}/lib{{ CrateName }}.dylib -create -output {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin/Contents/MacOS/{{ BinaryName }}.dylib
     mv {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin/Contents/MacOS/{{ BinaryName }}.dylib {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin/Contents/MacOS/{{ PluginName }}
-    /usr/bin/codesign --force --options runtime --timestamp -s "${SIGNING_IDENTITY}" {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin
+    /usr/bin/codesign --force --options runtime --timestamp -s "$( security find-identity -v -p codesigning | grep -m 1 "Developer ID Application" | awk -F '"' '{print $2}' )" {{ TargetDir }}/{{ BuildType }}/{{ PluginName }}.plugin
 
 [macos]
 notarize_and_staple BuildType TargetDir:
