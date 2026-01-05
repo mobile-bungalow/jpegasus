@@ -13,7 +13,7 @@ use after_effects as ae;
 use after_effects_sys as ae_sys;
 use types::*;
 
-use crate::param_util::INPUT_LAYER_CHECKOUT_ID;
+use crate::param_util::{INPUT_LAYER_CHECKOUT_ID, MATTE_LAYER_CHECKOUT_ID};
 
 static PLUGIN_ID: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
 
@@ -73,10 +73,9 @@ impl AdobePluginInstance for LocalMutex {
                         time_scale,
                     )?;
 
-                    // Now checkout matte layers with the same rect
                     let _ = cb.checkout_layer(
                         ParamIdx::LumaQualityMatte.idx(),
-                        ParamIdx::LumaQualityMatte.idx(),
+                        MATTE_LAYER_CHECKOUT_ID,
                         &req,
                         current_time,
                         time_step,
@@ -85,7 +84,6 @@ impl AdobePluginInstance for LocalMutex {
 
                     extra.set_result_rect(full_checkout.result_rect.into());
                     extra.set_max_result_rect(full_checkout.result_rect.into());
-                    extra.set_returns_extra_pixels(true);
                 }
             }
             Command::SmartRender { extra } => {
@@ -141,7 +139,7 @@ impl AdobePluginGlobal for JpegasusGlobal {
 
                 if self.get().is_none() {
                     if let Some(inner) = init_global() {
-                        let _ = self.set(inner);
+                        let _ = self.set(Mutex::new(inner));
                     } else {
                         out_data.set_return_msg("Jpegasus failed to initialize GPU");
                         return Err(ae::Error::Generic);

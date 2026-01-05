@@ -2,6 +2,7 @@ use crate::types::ParamIdx;
 use after_effects::{self as ae, Error};
 
 pub const INPUT_LAYER_CHECKOUT_ID: i32 = 100;
+pub const MATTE_LAYER_CHECKOUT_ID: i32 = 201;
 
 pub fn setup_params(params: &mut ae::Parameters<ParamIdx>) -> Result<(), Error> {
     params.add(
@@ -69,18 +70,18 @@ pub fn setup_params(params: &mut ae::Parameters<ParamIdx>) -> Result<(), Error> 
     )?;
 
     params.add(
-        ParamIdx::LumaQualityMatte,
-        "Luma Quality Matte",
-        ae::LayerDef::setup(|_| {}),
+        ParamIdx::ColorSpace,
+        "Color Space",
+        ae::PopupDef::setup(|f| {
+            f.set_options(&["RGB", "YCbCr (JPEG)"]);
+            f.set_default(2); // YCbCr default (1-indexed)
+        }),
     )?;
 
     params.add(
-        ParamIdx::ChromaSubsampling,
-        "Chroma Subsampling",
-        ae::PopupDef::setup(|f| {
-            f.set_options(&["None (4:4:4)", "4:2:2", "4:2:0", "4:1:1"]);
-            f.set_default(1);
-        }),
+        ParamIdx::LumaQualityMatte,
+        "Luma Quality Matte",
+        ae::LayerDef::setup(|_| {}),
     )?;
 
     Ok(())

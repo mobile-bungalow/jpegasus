@@ -32,9 +32,9 @@ pub enum ParamIdx {
     CoefficientMin,
     CoefficientMax,
     BlendOriginal,
+    ColorSpace,
 
     LumaQualityMatte,
-    ChromaSubsampling,
 }
 
 impl ParamIdx {
@@ -114,27 +114,18 @@ impl From<wgpu::TextureFormat> for BitDepth {
 pub struct InnerGlobal {
     pub device: Device,
     pub queue: Queue,
+    pub pipeline: DctPipeline,
 }
 
 #[allow(dead_code)]
-pub type JpegasusGlobal = std::sync::OnceLock<InnerGlobal>;
+pub type JpegasusGlobal = std::sync::OnceLock<Mutex<InnerGlobal>>;
 
 #[allow(dead_code)]
 pub type LocalMutex = Mutex<Local>;
 
 #[derive(Debug, Default)]
 #[allow(dead_code)]
-pub struct Local {
-    pub pipeline: Option<DctPipeline>,
-}
-
-#[allow(dead_code)]
-impl Local {
-    pub fn pipeline(&mut self, device: &Device) -> &mut DctPipeline {
-        self.pipeline
-            .get_or_insert_with(|| DctPipeline::new(device))
-    }
-}
+pub struct Local;
 
 #[allow(dead_code)]
 pub fn init_global() -> Option<InnerGlobal> {
@@ -196,5 +187,11 @@ pub fn init_global() -> Option<InnerGlobal> {
         }
     }));
 
-    Some(InnerGlobal { device, queue })
+    let pipeline = DctPipeline::new(&device);
+
+    Some(InnerGlobal {
+        device,
+        queue,
+        pipeline,
+    })
 }

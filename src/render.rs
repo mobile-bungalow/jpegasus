@@ -1,4 +1,4 @@
-use crate::param_util::INPUT_LAYER_CHECKOUT_ID;
+use crate::param_util::{INPUT_LAYER_CHECKOUT_ID, MATTE_LAYER_CHECKOUT_ID};
 use crate::pipeline::{DctPushConstants, Layer, LayerMut};
 use crate::types::*;
 
@@ -7,12 +7,12 @@ use after_effects as ae;
 
 pub fn render(
     state: &mut super::PluginState,
-    local: &mut Local,
+    _local: &mut Local,
     extra: &SmartRenderExtra,
 ) -> Result<(), after_effects::Error> {
     let params = load_parameters(state)?;
 
-    let Some(global) = state.global.get() else {
+    let Some(global_mutex) = state.global.get() else {
         return Err(Error::Generic);
     };
 
@@ -27,7 +27,7 @@ pub fn render(
     let input_row_bytes = input_layer.row_bytes().unsigned_abs();
 
     let luma_quality_layer = cb
-        .checkout_layer_pixels(ParamIdx::LumaQualityMatte.idx() as u32)
+        .checkout_layer_pixels(MATTE_LAYER_CHECKOUT_ID as u32)
         .ok()
         .flatten();
 
@@ -48,28 +48,32 @@ pub fn render(
         bit_depth,
     };
 
-    let luma_quality = luma_quality_layer.as_ref().map(|l| Layer {
-        buffer: l.buffer(),
-        row_bytes: l.row_bytes().unsigned_abs(),
-        width,
-        height,
-        bit_depth,
+    let luma_quality = luma_quality_layer.as_ref().and_then(|l| {
+        let matte_width = l.width() as u32;
+        let matte_height = l.height() as u32;
+        Some(Layer {
+            buffer: l.buffer(),
+            row_bytes: l.row_bytes().unsigned_abs(),
+            width: matte_width,
+            height: matte_height,
+            bit_depth,
+        })
     });
 
-    let pipeline = local.pipeline(&global.device);
     let output = LayerMut {
         buffer: out_layer.buffer_mut(),
         row_bytes: output_row_bytes,
     };
 
-    pipeline.render(
-        &global.device,
-        &global.queue,
-        push_constants,
-        input,
-        output,
-        luma_quality,
-    );
+    // Lock the global mutex to synchronize GPU access
+    let global = &mut *global_mutex.lock().map_err(|_| Error::Generic)?;
+    let InnerGlobal {
+        device,
+        queue,
+        pipeline,
+    } = global;
+
+    pipeline.render(device, queue, push_constants, input, output, luma_quality);
 
     Ok(())
 }
@@ -106,17 +110,15 @@ fn load_parameters(state: &super::PluginState) -> Result<DctPushConstants, after
     let coefficient_min = checkout!(in_data, time, ParamIdx::CoefficientMin, float);
     let coefficient_max = checkout!(in_data, time, ParamIdx::CoefficientMax, float);
     let blend_original = checkout!(in_data, time, ParamIdx::BlendOriginal, float);
-    let chroma_subsampling = checkout!(in_data, time, ParamIdx::ChromaSubsampling, popup);
+    let color_space = checkout!(in_data, time, ParamIdx::ColorSpace, popup);
 
-    let mut params = DctPushConstants {
-        block_size,
-        coefficient_min,
-        coefficient_max,
-        blend_original,
-        chroma_subsampling,
-        ae_channel_order: 1,
-        ..DctPushConstants::new()
-    };
+    let mut params = DctPushConstants::new();
+    params.block_size = block_size;
+    params.coefficient_min = coefficient_min;
+    params.coefficient_max = coefficient_max;
+    params.blend_original = blend_original;
+    params.ae_channel_order = 1;
+    params.use_ycbcr = color_space; // 0 = RGB, 1 = YCbCr
     params.set_quality(quality);
     Ok(params)
 }
