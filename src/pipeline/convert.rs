@@ -38,10 +38,10 @@ pub fn load_rbga8_tex(
                     .chunks_exact(src_bpp)
                     .zip(dst_row.chunks_exact_mut(PIXEL_SIZE))
                 {
-                    for c in 0..CHANNELS {
-                        let offset = c * size_of::<u16>();
+                    for (chan, dst) in dst_px.iter_mut().enumerate() {
+                        let offset = chan * size_of::<u16>();
                         let bytes = &src_px[offset..offset + size_of::<u16>()];
-                        dst_px[c] = bytes[1];
+                        *dst = bytes[1];
                     }
                 }
             }
@@ -57,11 +57,11 @@ pub fn load_rbga8_tex(
                     .chunks_exact(src_bpp)
                     .zip(dst_row.chunks_exact_mut(PIXEL_SIZE))
                 {
-                    for c in 0..CHANNELS {
-                        let offset = c * size_of::<f32>();
+                    for (chan, dst) in dst_px.iter_mut().enumerate() {
+                        let offset = chan * size_of::<f32>();
                         let bytes = &src_px[offset..offset + size_of::<f32>()];
                         let f = f32::from_ne_bytes(bytes.try_into().unwrap());
-                        dst_px[c] = (f.clamp(0.0, 1.0) * 255.0) as u8;
+                        *dst = (f.clamp(0.0, 1.0) * 255.0) as u8;
                     }
                 }
             }

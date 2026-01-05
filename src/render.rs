@@ -48,16 +48,16 @@ pub fn render(
         bit_depth,
     };
 
-    let luma_quality = luma_quality_layer.as_ref().and_then(|l| {
+    let luma_quality = luma_quality_layer.as_ref().map(|l| {
         let matte_width = l.width() as u32;
         let matte_height = l.height() as u32;
-        Some(Layer {
+        Layer {
             buffer: l.buffer(),
             row_bytes: l.row_bytes().unsigned_abs(),
             width: matte_width,
             height: matte_height,
             bit_depth,
-        })
+        }
     });
 
     let output = LayerMut {

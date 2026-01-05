@@ -25,7 +25,7 @@ impl AdobePluginInstance for LocalMutex {
     }
 
     fn unflatten(_version: u16, _serialized: &[u8]) -> Result<Self, Error> {
-        Ok(Mutex::new(Local::default()))
+        Ok(Mutex::new(Local))
     }
 
     fn render(&self, _: &mut PluginState, _: &Layer, _: &mut Layer) -> Result<(), ae::Error> {
