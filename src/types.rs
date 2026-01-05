@@ -3,22 +3,18 @@ use std::sync::{Mutex, OnceLock};
 use strum::{EnumCount, EnumIter, FromRepr};
 use wgpu::{Device, Queue};
 
-#[allow(dead_code)]
 static FATAL_GPU_ERROR: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
-#[allow(dead_code)]
 fn error_store() -> &'static Mutex<Option<String>> {
     FATAL_GPU_ERROR.get_or_init(|| Mutex::new(None))
 }
 
-#[allow(dead_code)]
 pub fn set_gpu_error(error: String) {
     if let Ok(mut guard) = error_store().lock() {
         *guard = Some(error);
     }
 }
 
-#[allow(dead_code)]
 pub fn take_gpu_error() -> Option<String> {
     error_store().lock().ok().and_then(|mut g| g.take())
 }
